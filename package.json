@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
-    "dev": "lsof -ti :5000,:5173,:5174,:5175 | xargs -r kill -9 || true && concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev -- --host 0.0.0.0\"",
+    "dev": "fuser -k 5000/tcp 5173/tcp 5174/tcp 5175/tcp >/dev/null 2>&1 || true && concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev -- --host 0.0.0.0\"",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev -- --host 0.0.0.0",
     "build": "npm --prefix frontend run build"
