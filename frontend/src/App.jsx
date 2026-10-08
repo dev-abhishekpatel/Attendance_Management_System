@@ -37,10 +37,16 @@ const navConfig = {
     { path: '/profile', label: 'Profile' },
   ],
   employee: [
-    { path: '/dashboard', label: 'My Dashboard' },
+    { path: '/dashboard', label: 'Dashboard' },
     { path: '/attendance', label: 'Attendance' },
     { path: '/leave', label: 'Leave' },
     { path: '/wfh', label: 'WFH' },
+    { path: '/profile', label: 'Profile' },
+  ],
+  user: [
+    { path: '/dashboard', label: 'Dashboard' },
+    { path: '/attendance', label: 'My Attendance' },
+    { path: '/services', label: 'Requests' },
     { path: '/profile', label: 'Profile' },
   ],
 };
@@ -48,21 +54,27 @@ const navConfig = {
 const roleMeta = {
   admin: {
     label: 'Admin',
-    title: 'Admin Dashboard',
-    summary: 'Manage attendance, teams, approvals, and office operations.',
+    title: 'Executive Dashboard',
+    summary: 'Manage attendance, workforce operations, approvals, and office performance from a single command center.',
     permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'settings', 'profile'],
   },
   manager: {
     label: 'Manager',
-    title: 'Manager Workspace',
-    summary: 'Review team activity, monitor attendance, and manage departmental requests.',
+    title: 'Team Operations Workspace',
+    summary: 'Review team productivity, monitor attendance, and manage department-level requests with full visibility.',
     permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'profile'],
   },
   employee: {
     label: 'Employee',
     title: 'Employee Workspace',
-    summary: 'Track your daily attendance, leave requests, and WFH updates.',
+    summary: 'Track attendance, submit leave or WFH requests, and stay aligned with daily operations.',
     permissions: ['dashboard', 'attendance', 'leave', 'wfh', 'profile'],
+  },
+  user: {
+    label: 'User',
+    title: 'User Portal',
+    summary: 'Manage personal requests, stay updated on approvals, and keep your profile and access information current.',
+    permissions: ['dashboard', 'attendance', 'services', 'profile'],
   },
 };
 
@@ -70,8 +82,9 @@ function normalizeRole(role) {
   const normalized = String(role || 'employee').toLowerCase();
   if (normalized === 'hr' || normalized === 'manager') return 'manager';
   if (normalized === 'admin') return 'admin';
-  if (normalized === 'user') return 'employee';
-  return normalized === 'employee' ? 'employee' : 'employee';
+  if (normalized === 'user') return 'user';
+  if (normalized === 'employee') return 'employee';
+  return 'employee';
 }
 
 function getRoleLabel(role) {
@@ -87,11 +100,57 @@ function canAccessPermission(role, permission) {
   return permissions.includes(permission);
 }
 
-function StatCard({ label, value, tone = 'blue' }) {
+function matchesCurrentUser(record, user) {
+  if (!user) return true;
+
+  const role = normalizeRole(user.role);
+  if (role === 'admin' || role === 'manager') return true;
+
+  const userNames = [user.name, user.email, user.email?.split('@')[0]]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLowerCase());
+
+  const recordName = String(record?.employee || record?.name || '').trim().toLowerCase();
+  return userNames.some((name) => name && (recordName === name || recordName.includes(name) || name.includes(recordName)));
+}
+
+function getScopedDashboardData(data, user) {
+  if (!data || !user) return data;
+
+  const role = normalizeRole(user.role);
+  if (role === 'admin' || role === 'manager') return data;
+
+  const userName = String(user.name || '').trim();
+  return {
+    ...data,
+    employees: Array.isArray(data.employees)
+      ? data.employees.filter((employee) => matchesCurrentUser(employee, user))
+      : [],
+    attendance: Array.isArray(data.attendance)
+      ? data.attendance.filter((entry) => matchesCurrentUser(entry, user))
+      : [],
+    leaveRequests: Array.isArray(data.leaveRequests)
+      ? data.leaveRequests.filter((entry) => matchesCurrentUser(entry, user))
+      : [],
+    wfhRequests: Array.isArray(data.wfhRequests)
+      ? data.wfhRequests.filter((entry) => matchesCurrentUser(entry, user))
+      : [],
+    reports: userName ? data.reports?.filter((report) => report?.title?.toLowerCase().includes('attendance') || report?.title?.toLowerCase().includes('leave')) || [] : [],
+    notifications: Array.isArray(data.notifications)
+      ? data.notifications.filter((item) => {
+          const content = String(item?.text || '').toLowerCase();
+          return !content || content.includes(userName.toLowerCase()) || item?.type === 'success' || item?.type === 'info';
+        })
+      : [],
+  };
+}
+
+function StatCard({ label, value, tone = 'blue', detail }) {
   return (
     <div className={`stat-box ${tone}`}>
       <p>{label}</p>
       <h3>{value}</h3>
+      {detail ? <span>{detail}</span> : null}
     </div>
   );
 }
@@ -99,16 +158,14 @@ function StatCard({ label, value, tone = 'blue' }) {
 function AppShell({ user, navItems, onLogout, children, isGuest = false }) {
   return (
     <div className="app-shell">
-      <nav className="topbar">
-        <Link className="brand" to={user ? '/dashboard' : '/'}>
-          Office Attendance
-        </Link>
+      <header className="topbar">
+        <Link className="brand" to={user ? '/dashboard' : '/'}>Office Attendance</Link>
 
-        <div className="nav-links">
+        <nav className="nav-links">
           {(navItems || guestNavItems).map((item) => (
             <Link key={item.path} to={item.path}>{item.label}</Link>
           ))}
-        </div>
+        </nav>
 
         {isGuest ? (
           <div className="auth-actions">
@@ -117,26 +174,28 @@ function AppShell({ user, navItems, onLogout, children, isGuest = false }) {
           </div>
         ) : (
           <div className="account-box">
-            <span className="user-name">{user?.name || 'Team Member'}</span>
-            <span className="user-role-mini">{getRoleLabel(user?.role)}</span>
+            <div className="account-copy">
+              <span className="user-name">{user?.name || 'Team Member'}</span>
+              <span className="user-role-mini">{getRoleLabel(user?.role)}</span>
+            </div>
             <button type="button" className="button secondary small" onClick={onLogout}>Logout</button>
           </div>
         )}
-      </nav>
+      </header>
 
       <main className="page-shell">{children}</main>
 
       <footer className="app-footer">
         <div>
           <strong>Office Attendance</strong>
-          <p>Attendance, leave, and work-from-home management designed for modern teams.</p>
+          <p>Smart attendance, approval, and workforce management built for modern businesses.</p>
         </div>
         <div>
           <h4>Quick Links</h4>
           <ul>
             <li>Dashboard</li>
             <li>Attendance</li>
-            <li>Support</li>
+            <li>Support Center</li>
           </ul>
         </div>
         <div>
@@ -156,10 +215,10 @@ function HomePage() {
   return (
     <div className="page home-page">
       <div className="hero-card">
-        <span className="tag">Office Attendance System</span>
-        <h1>Smart workforce management for modern offices</h1>
+        <span className="tag">Workforce management platform</span>
+        <h1>Professional attendance and operations for real teams</h1>
         <p>
-          Monitor attendance, simplify leave approvals, manage WFH schedules, and keep your team organized in one clean workspace.
+          Track attendance, manage approvals, simplify remote work, and keep your office running smoothly with one modern system.
         </p>
         <div className="actions">
           <Link to="/login" className="button primary">Login</Link>
@@ -170,15 +229,33 @@ function HomePage() {
       <div className="feature-grid">
         <div className="mini-card">
           <h4>Role-based access</h4>
-          <p>Separate views for Admin, Employee, and User roles to keep work simple and structured.</p>
+          <p>Separate experiences for Admin, Employee, and User roles with relevant controls and workflows.</p>
         </div>
         <div className="mini-card">
-          <h4>Real-time visibility</h4>
-          <p>Keep track of attendance, late arrivals, leave requests, and WFH approvals instantly.</p>
+          <h4>Operational visibility</h4>
+          <p>Surface key metrics, approvals, and team updates without adding operational noise.</p>
         </div>
         <div className="mini-card">
-          <h4>Mobile-friendly UI</h4>
-          <p>Clean and responsive design that works across desktop, tablet, and mobile screens.</p>
+          <h4>Production-ready UX</h4>
+          <p>Modern cards, clean typography, responsive layouts, and realistic workflows for business use.</p>
+        </div>
+      </div>
+
+      <div className="role-overview">
+        <div className="role-panel admin-panel">
+          <span className="panel-chip">Admin</span>
+          <h3>Executive control</h3>
+          <p>Monitor staffing health, attendance compliance, approvals, and team performance across the organization.</p>
+        </div>
+        <div className="role-panel employee-panel">
+          <span className="panel-chip">Employee</span>
+          <h3>Daily workflow</h3>
+          <p>Capture attendance, manage leave, use WFH requests, and keep personal work status visible.</p>
+        </div>
+        <div className="role-panel user-panel">
+          <span className="panel-chip">User</span>
+          <h3>Service access</h3>
+          <p>Access requests, approvals, and profile visibility without unnecessary admin-side complexity.</p>
         </div>
       </div>
     </div>
@@ -188,12 +265,7 @@ function HomePage() {
 function AuthPage({ onAuth, initialMode = 'login' }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState(initialMode);
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'employee',
-  });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'user' });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -208,13 +280,7 @@ function AuthPage({ onAuth, initialMode = 'login' }) {
     setIsSubmitting(true);
 
     try {
-      const payload = {
-        name: form.name,
-        email: form.email,
-        password: form.password,
-        role: form.role,
-      };
-
+      const payload = { name: form.name, email: form.email, password: form.password, role: form.role };
       const result = mode === 'login'
         ? await loginUserRequest({ email: payload.email, password: payload.password })
         : await registerUserRequest(payload);
@@ -237,58 +303,24 @@ function AuthPage({ onAuth, initialMode = 'login' }) {
         </div>
 
         <div className="auth-toggle">
-          <button
-            type="button"
-            className={mode === 'login' ? 'toggle active' : 'toggle'}
-            onClick={() => setMode('login')}
-          >
-            Login
-          </button>
-          <button
-            type="button"
-            className={mode === 'signup' ? 'toggle active' : 'toggle'}
-            onClick={() => setMode('signup')}
-          >
-            Sign Up
-          </button>
+          <button type="button" className={mode === 'login' ? 'toggle active' : 'toggle'} onClick={() => setMode('login')}>Login</button>
+          <button type="button" className={mode === 'signup' ? 'toggle active' : 'toggle'} onClick={() => setMode('signup')}>Sign Up</button>
         </div>
 
         <form onSubmit={handleSubmit} className="stacked-form">
           {mode === 'signup' && (
-            <input
-              type="text"
-              name="name"
-              value={form.name}
-              onChange={handleChange}
-              placeholder="Full name"
-              required
-            />
+            <input type="text" name="name" value={form.name} onChange={handleChange} placeholder="Full name" required />
           )}
 
-          <input
-            type="email"
-            name="email"
-            value={form.email}
-            onChange={handleChange}
-            placeholder="Email address"
-            required
-          />
-
-          <input
-            type="password"
-            name="password"
-            value={form.password}
-            onChange={handleChange}
-            placeholder="Password"
-            minLength="6"
-            required
-          />
+          <input type="email" name="email" value={form.email} onChange={handleChange} placeholder="Email address" required />
+          <input type="password" name="password" value={form.password} onChange={handleChange} placeholder="Password" minLength="6" required />
 
           {mode === 'signup' && (
             <select name="role" value={form.role} onChange={handleChange}>
               <option value="admin">Admin</option>
               <option value="manager">Manager</option>
               <option value="employee">Employee</option>
+              <option value="user">User</option>
             </select>
           )}
 
@@ -299,11 +331,7 @@ function AuthPage({ onAuth, initialMode = 'login' }) {
           </button>
         </form>
 
-        {mode === 'login' && (
-          <p className="demo-note">
-            Use your registered account credentials to continue.
-          </p>
-        )}
+        {mode === 'login' && <p className="demo-note">Use your registered account credentials to continue.</p>}
       </div>
     </div>
   );
@@ -315,13 +343,13 @@ function ProfilePage({ user }) {
 
   return (
     <div className="page">
-      <div className="card wide-card profile-card">
+      <div className="card wide-card table-card">
         <div className="section-header">
           <div>
             <span className="tag">Profile</span>
             <h2>{user?.name || 'Team Member'}</h2>
           </div>
-          <div className="user-role">{getRoleLabel(user?.role)}</div>
+          <div className="role-badge">{getRoleLabel(user?.role)}</div>
         </div>
 
         <div className="settings-grid">
@@ -335,7 +363,7 @@ function ProfilePage({ user }) {
           </div>
           <div className="mini-card">
             <h4>Department</h4>
-            <p>{currentRole === 'admin' ? 'Administration' : currentRole === 'manager' ? 'Operations' : 'General Team'}</p>
+            <p>{currentRole === 'admin' ? 'Administration' : currentRole === 'manager' ? 'Operations' : currentRole === 'user' ? 'Customer Success' : 'General Team'}</p>
           </div>
           <div className="mini-card">
             <h4>Permissions</h4>
@@ -350,11 +378,11 @@ function ProfilePage({ user }) {
 function ServicesPage() {
   return (
     <div className="page">
-      <div className="card wide-card">
+      <div className="card wide-card table-card">
         <div className="section-header">
           <div>
-            <span className="tag">Services</span>
-            <h2>Available Requests</h2>
+            <span className="tag">Requests</span>
+            <h2>Service and Support Hub</h2>
           </div>
         </div>
         <div className="settings-grid">
@@ -381,7 +409,7 @@ function ServicesPage() {
 }
 
 function DashboardPage({ data, user }) {
-  if (!data) return <div className="page"><div className="card">Loading dashboard...</div></div>;
+  if (!data) return <div className="page"><div className="card wide-card">Loading dashboard...</div></div>;
 
   const roleName = normalizeRole(user?.role);
   const roleInfo = roleMeta[roleName] || roleMeta.employee;
@@ -389,50 +417,66 @@ function DashboardPage({ data, user }) {
   const dashboardContent = {
     admin: {
       cards: [
-        { label: 'Total Employees', value: data.stats.totalEmployees || 0, tone: 'blue' },
-        { label: 'Present', value: data.stats.present || 0, tone: 'green' },
-        { label: 'Absent', value: data.stats.absent || 0, tone: 'red' },
-        { label: 'Late', value: data.stats.late || 0, tone: 'amber' },
-        { label: 'Leave', value: data.stats.leave || 0, tone: 'purple' },
-        { label: 'WFH', value: data.stats.wfh || 0, tone: 'cyan' },
+        { label: 'Total Employees', value: data.stats.totalEmployees || 0, tone: 'blue', detail: 'Across departments' },
+        { label: 'Present Today', value: data.stats.present || 0, tone: 'green', detail: 'Checked in' },
+        { label: 'Absent', value: data.stats.absent || 0, tone: 'red', detail: 'Accounts to review' },
+        { label: 'Late Arrivals', value: data.stats.late || 0, tone: 'amber', detail: 'Needs follow-up' },
+        { label: 'Leave Requests', value: data.stats.leave || 0, tone: 'purple', detail: 'Awaiting approval' },
+        { label: 'WFH Team', value: data.stats.wfh || 0, tone: 'cyan', detail: 'Remote work active' },
       ],
-      recentTitle: 'Team Attendance Overview',
+      recentTitle: 'Operational Overview',
       quickActions: [
-        'Review pending leave approvals.',
-        'Check late employee reports.',
-        'Share daily staffing summary.',
+        'Review pending approvals before noon.',
+        'Audit attendance compliance by team.',
+        'Publish the daily staffing summary.',
       ],
     },
     manager: {
       cards: [
-        { label: 'Team Members', value: data.stats.totalEmployees || 0, tone: 'blue' },
-        { label: 'Present', value: data.stats.present || 0, tone: 'green' },
-        { label: 'Late', value: data.stats.late || 0, tone: 'amber' },
-        { label: 'Pending Leave', value: data.stats.leave || 0, tone: 'purple' },
-        { label: 'WFH', value: data.stats.wfh || 0, tone: 'cyan' },
-        { label: 'Reports', value: 'Ready', tone: 'red' },
+        { label: 'Team Members', value: data.stats.totalEmployees || 0, tone: 'blue', detail: 'Managed under this team' },
+        { label: 'Present', value: data.stats.present || 0, tone: 'green', detail: 'Checked in today' },
+        { label: 'Late', value: data.stats.late || 0, tone: 'amber', detail: 'Review required' },
+        { label: 'Pending Leave', value: data.stats.leave || 0, tone: 'purple', detail: 'Approval queue' },
+        { label: 'WFH', value: data.stats.wfh || 0, tone: 'cyan', detail: 'Remote work load' },
+        { label: 'Reports', value: 'Ready', tone: 'red', detail: 'Updated summary' },
       ],
-      recentTitle: 'Department Overview',
+      recentTitle: 'Department Snapshot',
       quickActions: [
-        'Monitor employee attendance trends.',
-        'Approve team leave requests.',
-        'Review manager-level reports.',
+        'Monitor shift coverage and productivity.',
+        'Review leave requests with cross-team impact.',
+        'Validate manager-level summaries before sign-off.',
       ],
     },
     employee: {
       cards: [
-        { label: 'My Attendance', value: data.stats.present || 0, tone: 'blue' },
-        { label: 'Leave Balance', value: '12 Days', tone: 'green' },
-        { label: 'WFH Days', value: data.stats.wfh || 0, tone: 'purple' },
-        { label: 'Pending Tasks', value: '03', tone: 'amber' },
-        { label: 'Shift Status', value: 'On Time', tone: 'cyan' },
-        { label: 'Alerts', value: '01', tone: 'red' },
+        { label: 'My Attendance', value: data.stats.present || 0, tone: 'blue', detail: 'Recorded days' },
+        { label: 'Leave Balance', value: '12 Days', tone: 'green', detail: 'Available this cycle' },
+        { label: 'WFH Days', value: data.stats.wfh || 0, tone: 'purple', detail: 'Approved' },
+        { label: 'Tasks Due', value: '03', tone: 'amber', detail: 'In my queue' },
+        { label: 'Shift Status', value: 'On Time', tone: 'cyan', detail: 'Current performance' },
+        { label: 'Alerts', value: '01', tone: 'red', detail: 'Needs attention' },
       ],
-      recentTitle: 'My Recent Records',
+      recentTitle: 'My Recent Activity',
       quickActions: [
-        'Update your attendance entry.',
-        'Submit leave or WFH request.',
-        'Check your assigned tasks.',
+        'Update your attendance entry before close of day.',
+        'Submit or review your leave and WFH requests.',
+        'Check your pending tasks and approvals.',
+      ],
+    },
+    user: {
+      cards: [
+        { label: 'Open Requests', value: '04', tone: 'blue', detail: 'Currently active' },
+        { label: 'Approved', value: '09', tone: 'green', detail: 'This month' },
+        { label: 'Pending Approval', value: '02', tone: 'amber', detail: 'Awaiting review' },
+        { label: 'Profile Completion', value: '92%', tone: 'purple', detail: 'Updated profile' },
+        { label: 'Support Tickets', value: '01', tone: 'cyan', detail: 'Awaiting response' },
+        { label: 'Notifications', value: '03', tone: 'red', detail: 'Unread updates' },
+      ],
+      recentTitle: 'Recent Requests',
+      quickActions: [
+        'Track your pending workplace requests.',
+        'Refresh profile and access details if needed.',
+        'Review recent approvals and support updates.',
       ],
     },
   };
@@ -449,7 +493,7 @@ function DashboardPage({ data, user }) {
           <span className="tag">{roleInfo.label} Portal</span>
           <h2>{roleInfo.title}</h2>
         </div>
-        {user && <div className="user-role">{roleInfo.label.toUpperCase()}</div>}
+        <div className="role-badge">{roleInfo.label.toUpperCase()}</div>
       </div>
 
       <div className="hero-inline">
@@ -458,12 +502,12 @@ function DashboardPage({ data, user }) {
 
       <div className="stats-grid">
         {content.cards.map((card) => (
-          <StatCard key={card.label} label={card.label} value={card.value} tone={card.tone} />
+          <StatCard key={card.label} label={card.label} value={card.value} tone={card.tone} detail={card.detail} />
         ))}
       </div>
 
       <div className="content-grid two-col">
-        <div className="card">
+        <div className="card panel-card">
           <h3>{content.recentTitle}</h3>
           <div className="list-table">
             {recentRows.map((row) => (
@@ -476,8 +520,8 @@ function DashboardPage({ data, user }) {
           </div>
         </div>
 
-        <div className="card">
-          <h3>Quick Actions</h3>
+        <div className="card panel-card">
+          <h3>Priority Actions</h3>
           <ul className="notification-list">
             {content.quickActions.map((action, index) => (
               <li key={`${action}-${index}`} className={index % 2 === 0 ? 'note info' : 'note success'}>
@@ -497,9 +541,12 @@ function EmployeesPage({ data, userRole }) {
 
   return (
     <div className="page">
-      <div className="card wide-card">
+      <div className="card wide-card table-card">
         <div className="section-header">
-          <h2>Employees</h2>
+          <div>
+            <span className="tag">Team Directory</span>
+            <h2>Employees</h2>
+          </div>
           {canManageEmployees && <button type="button" className="button primary">Add Employee</button>}
         </div>
         <div className="table-wrap">
@@ -518,7 +565,7 @@ function EmployeesPage({ data, userRole }) {
               {(data?.employees || []).map((employee) => (
                 <tr key={employee.id || employee.employeeCode || employee.name}>
                   <td>{employee.name}</td>
-                  <td>{getRoleLabel(employee.role || (currentRole === 'admin' ? 'employee' : 'employee'))}</td>
+                  <td>{getRoleLabel(employee.role || 'employee')}</td>
                   <td>{employee.employeeCode || 'N/A'}</td>
                   <td>{employee.department || 'General'}</td>
                   <td>{employee.designation || 'Team Member'}</td>
@@ -536,11 +583,22 @@ function EmployeesPage({ data, userRole }) {
 function AttendancePage({ data }) {
   return (
     <div className="page">
-      <div className="card wide-card">
+      <div className="card wide-card table-card">
         <div className="section-header">
-          <h2>Attendance</h2>
+          <div>
+            <span className="tag">Daily Tracking</span>
+            <h2>Attendance</h2>
+          </div>
           <button type="button" className="button primary">Mark Attendance</button>
         </div>
+
+        <div className="stats-grid compact">
+          <StatCard label="Present" value={data?.stats?.present || 0} tone="green" />
+          <StatCard label="Late" value={data?.stats?.late || 0} tone="amber" />
+          <StatCard label="Absent" value={data?.stats?.absent || 0} tone="red" />
+          <StatCard label="WFH" value={data?.stats?.wfh || 0} tone="cyan" />
+        </div>
+
         <div className="table-wrap">
           <table>
             <thead>
@@ -583,20 +641,20 @@ function LeavePage({ data, onSubmit }) {
 
   return (
     <div className="page two-column-layout">
-      <div className="card">
-        <h2>Leave Requests</h2>
+      <div className="card panel-card">
+        <h2>Leave Request</h2>
         <form onSubmit={handleSubmit} className="stacked-form">
           <input value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} placeholder="Employee name" />
           <input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="Leave type" />
           <input type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
           <input type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />
-          <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Reason" rows="4" />
+          <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Reason for leave" rows="4" />
           <button className="button primary" type="submit">Submit Leave</button>
         </form>
       </div>
 
-      <div className="card">
-        <h2>Pending Requests</h2>
+      <div className="card panel-card">
+        <h2>Approval Queue</h2>
         <div className="list-stack">
           {(data?.leaveRequests || []).map((item) => (
             <div className="request-card" key={item.id}>
@@ -625,17 +683,17 @@ function WfhPage({ data, onSubmit }) {
 
   return (
     <div className="page two-column-layout">
-      <div className="card">
+      <div className="card panel-card">
         <h2>WFH Request</h2>
         <form onSubmit={handleSubmit} className="stacked-form">
           <input value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} placeholder="Employee name" />
           <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-          <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Reason" rows="4" />
+          <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Reason for remote work" rows="4" />
           <button className="button primary" type="submit">Request WFH</button>
         </form>
       </div>
 
-      <div className="card">
+      <div className="card panel-card">
         <h2>WFH Overview</h2>
         <div className="list-stack">
           {(data?.wfhRequests || []).map((item) => (
@@ -657,8 +715,13 @@ function WfhPage({ data, onSubmit }) {
 function ReportsPage({ data }) {
   return (
     <div className="page">
-      <div className="card wide-card">
-        <h2>Reports</h2>
+      <div className="card wide-card table-card">
+        <div className="section-header">
+          <div>
+            <span className="tag">Insights</span>
+            <h2>Reports & Analytics</h2>
+          </div>
+        </div>
         <div className="stats-grid compact">
           {(data?.reports || []).map((report) => (
             <div className="stat-box simple" key={report.id}>
@@ -675,8 +738,13 @@ function ReportsPage({ data }) {
 function NotificationsPage({ data }) {
   return (
     <div className="page">
-      <div className="card wide-card">
-        <h2>Notifications</h2>
+      <div className="card wide-card table-card">
+        <div className="section-header">
+          <div>
+            <span className="tag">Updates</span>
+            <h2>Notifications</h2>
+          </div>
+        </div>
         <ul className="notification-list large">
           {(data?.notifications || []).map((item) => (
             <li key={item.id} className={`note ${item.type}`}>
@@ -692,16 +760,21 @@ function NotificationsPage({ data }) {
 function SettingsPage() {
   return (
     <div className="page">
-      <div className="card wide-card">
-        <h2>Settings</h2>
+      <div className="card wide-card table-card">
+        <div className="section-header">
+          <div>
+            <span className="tag">Configuration</span>
+            <h2>System Settings</h2>
+          </div>
+        </div>
         <div className="settings-grid">
           <div className="mini-card">
-            <h4>Company Settings</h4>
+            <h4>Office Settings</h4>
             <p>Office hours, timezone, branch settings</p>
           </div>
           <div className="mini-card">
-            <h4>Biometric Settings</h4>
-            <p>Face, fingerprint, GPS, geofence rules</p>
+            <h4>Access Control</h4>
+            <p>Biometric, geofence, and security policy</p>
           </div>
           <div className="mini-card">
             <h4>Security</h4>
@@ -737,19 +810,23 @@ export default function App() {
   };
 
   const handleLeaveSubmit = async (payload) => {
-    const response = await submitLeaveRequest(payload);
-    setData((prev) => ({
-      ...prev,
-      leaveRequests: [response, ...(prev?.leaveRequests || [])],
-    }));
+    const requestPayload = {
+      ...payload,
+      employee: payload.employee || user?.name || 'Employee',
+    };
+
+    const response = await submitLeaveRequest(requestPayload);
+    setData((prev) => ({ ...prev, leaveRequests: [response, ...(prev?.leaveRequests || [])] }));
   };
 
   const handleWfhSubmit = async (payload) => {
-    const response = await submitWfhRequest(payload);
-    setData((prev) => ({
-      ...prev,
-      wfhRequests: [response, ...(prev?.wfhRequests || [])],
-    }));
+    const requestPayload = {
+      ...payload,
+      employee: payload.employee || user?.name || 'Employee',
+    };
+
+    const response = await submitWfhRequest(requestPayload);
+    setData((prev) => ({ ...prev, wfhRequests: [response, ...(prev?.wfhRequests || [])] }));
   };
 
   const handleLogout = () => {
@@ -777,45 +854,23 @@ export default function App() {
     </Routes>
   );
 
+  const scopedData = getScopedDashboardData(data, user);
+
   const renderProtectedRoutes = () => (
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/login" element={<Navigate to="/dashboard" replace />} />
       <Route path="/signup" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/dashboard" element={<DashboardPage data={data} user={user} />} />
-      <Route
-        path="/employees"
-        element={
-          canAccessPermission(user?.role, 'employees') ? (
-            <EmployeesPage data={data} userRole={user?.role} />
-          ) : (
-            <Navigate to="/dashboard" replace />
-          )
-        }
-      />
-      <Route
-        path="/attendance"
-        element={canAccessPermission(user?.role, 'attendance') ? <AttendancePage data={data} /> : <Navigate to="/dashboard" replace />}
-      />
-      <Route
-        path="/leave"
-        element={canAccessPermission(user?.role, 'leave') ? <LeavePage data={data} onSubmit={handleLeaveSubmit} /> : <Navigate to="/dashboard" replace />}
-      />
-      <Route
-        path="/wfh"
-        element={canAccessPermission(user?.role, 'wfh') ? <WfhPage data={data} onSubmit={handleWfhSubmit} /> : <Navigate to="/dashboard" replace />}
-      />
-      <Route
-        path="/reports"
-        element={canAccessPermission(user?.role, 'reports') ? <ReportsPage data={data} /> : <Navigate to="/dashboard" replace />}
-      />
-      <Route path="/notifications" element={<NotificationsPage data={data} />} />
-      <Route
-        path="/settings"
-        element={canAccessPermission(user?.role, 'settings') ? <SettingsPage /> : <Navigate to="/dashboard" replace />}
-      />
+      <Route path="/dashboard" element={<DashboardPage data={scopedData} user={user} />} />
+      <Route path="/employees" element={canAccessPermission(user?.role, 'employees') ? <EmployeesPage data={scopedData} userRole={user?.role} /> : <Navigate to="/dashboard" replace />} />
+      <Route path="/attendance" element={canAccessPermission(user?.role, 'attendance') ? <AttendancePage data={scopedData} /> : <Navigate to="/dashboard" replace />} />
+      <Route path="/leave" element={canAccessPermission(user?.role, 'leave') ? <LeavePage data={scopedData} onSubmit={handleLeaveSubmit} /> : <Navigate to="/dashboard" replace />} />
+      <Route path="/wfh" element={canAccessPermission(user?.role, 'wfh') ? <WfhPage data={scopedData} onSubmit={handleWfhSubmit} /> : <Navigate to="/dashboard" replace />} />
+      <Route path="/reports" element={canAccessPermission(user?.role, 'reports') ? <ReportsPage data={scopedData} /> : <Navigate to="/dashboard" replace />} />
+      <Route path="/notifications" element={<NotificationsPage data={scopedData} />} />
+      <Route path="/settings" element={canAccessPermission(user?.role, 'settings') ? <SettingsPage /> : <Navigate to="/dashboard" replace />} />
       <Route path="/profile" element={<ProfilePage user={user} />} />
-      <Route path="/services" element={<ServicesPage />} />
+      <Route path="/services" element={canAccessPermission(user?.role, 'services') ? <ServicesPage /> : <Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
