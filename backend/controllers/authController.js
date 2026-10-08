@@ -9,6 +9,8 @@ export const registerUser = async (req, res) => {
       return res.status(400).json({ message: 'Name, email, and password are required.' });
     }
 
+    const normalizedRole = ['admin', 'manager', 'employee'].includes(role) ? role : 'employee';
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists.' });
@@ -18,7 +20,7 @@ export const registerUser = async (req, res) => {
       name,
       email,
       password,
-      role: role || 'employee',
+      role: normalizedRole,
     });
 
     res.status(201).json({
