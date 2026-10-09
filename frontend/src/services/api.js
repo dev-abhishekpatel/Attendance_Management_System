@@ -403,11 +403,23 @@ export async function updateWfhStatus(id, newStatus) {
   return state.wfhRequests[idx];
 }
 
-export async function updateSettings(newSettings) {
+export async function markAllNotificationsRead() {
   let state = getInitialState();
-  state.settings = { ...state.settings, ...newSettings };
+  state.notifications = (state.notifications || []).map((n) => ({ ...n, read: true }));
   persistLocalData(state);
-  return state.settings;
+  return state.notifications;
+}
+
+export async function clearNotifications() {
+  let state = getInitialState();
+  state.notifications = [];
+  persistLocalData(state);
+  return [];
+}
+
+export async function resetSystemState() {
+  localStorage.removeItem(DATA_STORAGE_KEY);
+  return getInitialState();
 }
 
 export function exportToCSV(filename, rows) {
@@ -425,3 +437,4 @@ export function exportToCSV(filename, rows) {
   link.click();
   document.body.removeChild(link);
 }
+

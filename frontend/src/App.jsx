@@ -2,15 +2,22 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import AddEmployeeModal from './components/AddEmployeeModal';
 import AnalyticsWidget from './components/AnalyticsWidget';
+import AuthPage from './components/AuthPage';
 import CheckInModal from './components/CheckInModal';
+import DigitalClockWidget from './components/DigitalClockWidget';
+import LogoutModal from './components/LogoutModal';
+import NotificationDropdown from './components/NotificationDropdown';
+import PaginationControls from './components/PaginationControls';
+import ProfilePage from './components/ProfilePage';
 import {
+  clearNotifications,
   clearStoredAuth,
   deleteEmployee,
   exportToCSV,
   getStoredAuthUser,
   loadDashboardData,
-  loginUserRequest,
-  registerUserRequest,
+  markAllNotificationsRead,
+  resetSystemState,
   submitAddEmployee,
   submitCheckIn,
   submitCheckOut,
@@ -38,6 +45,7 @@ const navConfig = {
     { path: '/reports', label: 'Reports' },
     { path: '/notifications', label: 'Updates' },
     { path: '/settings', label: 'Settings' },
+    { path: '/profile', label: 'Profile' },
   ],
   manager: [
     { path: '/dashboard', label: 'Dashboard' },
@@ -47,6 +55,7 @@ const navConfig = {
     { path: '/wfh', label: 'WFH' },
     { path: '/reports', label: 'Reports' },
     { path: '/notifications', label: 'Updates' },
+    { path: '/profile', label: 'Profile' },
   ],
   employee: [
     { path: '/dashboard', label: 'Dashboard' },
@@ -65,10 +74,10 @@ const navConfig = {
 };
 
 const roleMeta = {
-  admin: { label: 'Admin', title: 'Executive Command Center', permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'notifications', 'settings', 'profile'] },
-  manager: { label: 'Manager / HR', title: 'Workforce Operations Hub', permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'notifications', 'profile'] },
-  employee: { label: 'Employee', title: 'Employee Portal', permissions: ['dashboard', 'attendance', 'leave', 'wfh', 'notifications', 'profile'] },
-  user: { label: 'User', title: 'User Workspace', permissions: ['dashboard', 'attendance', 'notifications', 'profile'] },
+  admin: { label: 'Admin', title: 'Executive Command Center' },
+  manager: { label: 'Manager / HR', title: 'Workforce Operations Hub' },
+  employee: { label: 'Employee', title: 'Employee Portal' },
+  user: { label: 'User', title: 'User Workspace' },
 };
 
 function normalizeRole(role) {
@@ -127,7 +136,18 @@ function ToastAlert({ message, type = 'success', onClose }) {
   );
 }
 
-function AppShell({ user, navItems, onLogout, theme, onToggleTheme, children, isGuest = false }) {
+function AppShell({
+  user,
+  navItems,
+  onOpenLogout,
+  theme,
+  onToggleTheme,
+  children,
+  isGuest = false,
+  notifications = [],
+  onMarkAllRead,
+  onClearNotifications,
+}) {
   return (
     <div className="app-shell" data-theme={theme}>
       <header className="topbar">
@@ -143,6 +163,14 @@ function AppShell({ user, navItems, onLogout, theme, onToggleTheme, children, is
         </nav>
 
         <div className="topbar-right">
+          {!isGuest && (
+            <NotificationDropdown
+              notifications={notifications}
+              onMarkAllRead={onMarkAllRead}
+              onClearAll={onClearNotifications}
+            />
+          )}
+
           <button className="btn btn-secondary btn-sm" onClick={onToggleTheme} title="Toggle Theme">
             {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
           </button>
@@ -161,7 +189,7 @@ function AppShell({ user, navItems, onLogout, theme, onToggleTheme, children, is
                 <span style={{ fontSize: '0.85rem', fontWeight: '700' }}>{user?.name || 'Team Member'}</span>
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{getRoleLabel(user?.role)}</span>
               </div>
-              <button className="btn btn-secondary btn-sm" onClick={onLogout} style={{ marginLeft: '6px' }}>
+              <button className="btn btn-secondary btn-sm" onClick={onOpenLogout} style={{ marginLeft: '6px' }}>
                 Logout
               </button>
             </div>
@@ -183,6 +211,7 @@ function AppShell({ user, navItems, onLogout, theme, onToggleTheme, children, is
               <li><Link to="/dashboard" style={{ color: 'inherit', textDecoration: 'none' }}>Dashboard</Link></li>
               <li><Link to="/attendance" style={{ color: 'inherit', textDecoration: 'none' }}>Attendance Logs</Link></li>
               <li><Link to="/leave" style={{ color: 'inherit', textDecoration: 'none' }}>Leave & WFH Center</Link></li>
+              <li><Link to="/profile" style={{ color: 'inherit', textDecoration: 'none' }}>My Profile</Link></li>
             </ul>
           </div>
           <div className="footer-col">
@@ -219,94 +248,27 @@ function HomePage() {
   );
 }
 
-function AuthPage({ onAuth, initialMode = 'login' }) {
-  const navigate = useNavigate();
-  const [mode, setMode] = useState(initialMode);
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'employee' });
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-    try {
-      const res = mode === 'login'
-        ? await loginUserRequest({ email: form.email, password: form.password })
-        : await registerUserRequest(form);
-      onAuth(res);
-      navigate('/dashboard');
-    } catch (err) {
-      setError(err.message || 'Authentication failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ maxWidth: '440px', margin: '40px auto' }}>
-      <div className="glass-card">
-        <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '6px' }}>
-          {mode === 'login' ? 'Welcome Back' : 'Create Account'}
-        </h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '20px' }}>
-          Sign in to access your attendance workspace
-        </p>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--input-bg)', padding: '4px', borderRadius: '12px', marginBottom: '20px', border: '1px solid var(--border)' }}>
-          <button className={`btn ${mode === 'login' ? 'btn-primary' : 'btn-secondary'}`} style={{ border: 'none' }} onClick={() => setMode('login')}>Login</button>
-          <button className={`btn ${mode === 'signup' ? 'btn-primary' : 'btn-secondary'}`} style={{ border: 'none' }} onClick={() => setMode('signup')}>Sign Up</button>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {mode === 'signup' && (
-            <div className="form-group">
-              <label className="form-label">Full Name</label>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Abhishek Sharma" required />
-            </div>
-          )}
-
-          <div className="form-group">
-            <label className="form-label">Email Address</label>
-            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" required />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" required />
-          </div>
-
-          {mode === 'signup' && (
-            <div className="form-group">
-              <label className="form-label">System Role</label>
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="admin">Admin</option>
-                <option value="manager">Manager / HR</option>
-                <option value="employee">Employee</option>
-              </select>
-            </div>
-          )}
-
-          {error && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger)', padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}>{error}</div>}
-
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '6px' }} disabled={loading}>
-            {loading ? 'Processing...' : mode === 'login' ? 'Sign In' : 'Register Account'}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function DashboardPage({ data, user, onOpenCheckIn, onOpenAddEmp }) {
+function DashboardPage({ data, user, onOpenCheckIn, onOpenAddEmp, onQuickCheckOut }) {
   if (!data) return <div className="glass-card">Loading dashboard data...</div>;
 
   const stats = data.stats || {};
   const currentRole = normalizeRole(user?.role);
   const canManage = currentRole === 'admin' || currentRole === 'manager';
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayAttendance = (data.attendance || []).find(
+    (a) => (a.employee?.toLowerCase() === user?.name?.toLowerCase() || a.employeeId === user?.id) && a.date === todayStr
+  );
+
   return (
     <div>
+      <DigitalClockWidget
+        onOpenCheckIn={onOpenCheckIn}
+        user={user}
+        onQuickCheckOut={onQuickCheckOut}
+        todayAttendance={todayAttendance}
+      />
+
       <div className="section-header">
         <div>
           <span className="badge badge-approved" style={{ marginBottom: '8px' }}>
@@ -394,6 +356,19 @@ function DashboardPage({ data, user, onOpenCheckIn, onOpenAddEmp }) {
 function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
+  const [sortCol, setSortCol] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+  };
 
   const filtered = (data?.employees || []).filter((emp) => {
     const matchesSearch =
@@ -403,6 +378,18 @@ function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
     const matchesDept = deptFilter === 'ALL' || emp.department === deptFilter;
     return matchesSearch && matchesDept;
   });
+
+  const sorted = [...filtered].sort((a, b) => {
+    let valA = a[sortCol] || '';
+    let valB = b[sortCol] || '';
+    if (typeof valA === 'string') valA = valA.toLowerCase();
+    if (typeof valB === 'string') valB = valB.toLowerCase();
+    if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const paginated = sorted.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleExport = () => {
     exportToCSV('Employees_Directory', filtered);
@@ -425,11 +412,11 @@ function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
         <div className="controls-bar">
           <div className="search-box">
             <span className="search-icon">🔍</span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, code, or email..." />
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }} placeholder="Search by name, code, or email..." />
           </div>
 
           <div className="filter-group">
-            <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+            <select value={deptFilter} onChange={(e) => { setDeptFilter(e.target.value); setCurrentPage(1); }}>
               <option value="ALL">All Departments</option>
               <option value="Engineering">Engineering</option>
               <option value="HR">HR</option>
@@ -445,9 +432,15 @@ function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
           <table className="modern-table">
             <thead>
               <tr>
-                <th>Code</th>
-                <th>Employee Name</th>
-                <th>Department</th>
+                <th className="sortable-th" onClick={() => handleSort('employeeCode')}>
+                  Code {sortCol === 'employeeCode' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
+                <th className="sortable-th" onClick={() => handleSort('name')}>
+                  Employee Name {sortCol === 'name' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
+                <th className="sortable-th" onClick={() => handleSort('department')}>
+                  Department {sortCol === 'department' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
                 <th>Designation</th>
                 <th>Branch</th>
                 <th>Shift</th>
@@ -456,7 +449,7 @@ function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((emp) => (
+              {paginated.map((emp) => (
                 <tr key={emp.id}>
                   <td><code>{emp.employeeCode}</code></td>
                   <td>
@@ -492,6 +485,14 @@ function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
             </tbody>
           </table>
         </div>
+
+        <PaginationControls
+          currentPage={currentPage}
+          totalItems={sorted.length}
+          itemsPerPage={itemsPerPage}
+          onPageChange={(p) => setCurrentPage(p)}
+          onItemsPerPageChange={(num) => { setItemsPerPage(num); setCurrentPage(1); }}
+        />
       </div>
     </div>
   );
@@ -500,12 +501,39 @@ function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
 function AttendancePage({ data, onOpenCheckIn, onCheckOut }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [methodFilter, setMethodFilter] = useState('ALL');
+  const [sortCol, setSortCol] = useState('date');
+  const [sortDir, setSortDir] = useState('desc');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  const handleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+  };
 
   const filtered = (data?.attendance || []).filter((row) => {
     const matchesSearch = row.employee.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === 'ALL' || row.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesMethod = methodFilter === 'ALL' || row.method?.toLowerCase().includes(methodFilter.toLowerCase());
+    return matchesSearch && matchesStatus && matchesMethod;
   });
+
+  const sorted = [...filtered].sort((a, b) => {
+    let valA = a[sortCol] || '';
+    let valB = b[sortCol] || '';
+    if (typeof valA === 'string') valA = valA.toLowerCase();
+    if (typeof valB === 'string') valB = valB.toLowerCase();
+    if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const paginated = sorted.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleExport = () => {
     exportToCSV('Attendance_Logs', filtered);
@@ -528,16 +556,25 @@ function AttendancePage({ data, onOpenCheckIn, onCheckOut }) {
         <div className="controls-bar">
           <div className="search-box">
             <span className="search-icon">🔍</span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter attendance by employee name..." />
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }} placeholder="Filter attendance by employee name..." />
           </div>
 
           <div className="filter-group">
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}>
               <option value="ALL">All Statuses</option>
               <option value="Present">Present</option>
               <option value="Late">Late</option>
               <option value="WFH">WFH</option>
               <option value="Absent">Absent</option>
+            </select>
+
+            <select value={methodFilter} onChange={(e) => { setMethodFilter(e.target.value); setCurrentPage(1); }}>
+              <option value="ALL">All Verification Methods</option>
+              <option value="Face">Face Recognition</option>
+              <option value="GPS">GPS Location</option>
+              <option value="Fingerprint">Fingerprint</option>
+              <option value="Mobile">Mobile Biometric</option>
+              <option value="QR">QR Code</option>
             </select>
           </div>
         </div>
@@ -546,8 +583,12 @@ function AttendancePage({ data, onOpenCheckIn, onCheckOut }) {
           <table className="modern-table">
             <thead>
               <tr>
-                <th>Employee</th>
-                <th>Date</th>
+                <th className="sortable-th" onClick={() => handleSort('employee')}>
+                  Employee {sortCol === 'employee' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
+                <th className="sortable-th" onClick={() => handleSort('date')}>
+                  Date {sortCol === 'date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
                 <th>Check-In</th>
                 <th>Check-Out</th>
                 <th>Status</th>
@@ -557,7 +598,7 @@ function AttendancePage({ data, onOpenCheckIn, onCheckOut }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row) => (
+              {paginated.map((row) => (
                 <tr key={row.id}>
                   <td style={{ fontWeight: '700' }}>{row.employee}</td>
                   <td>{row.date}</td>
@@ -584,6 +625,14 @@ function AttendancePage({ data, onOpenCheckIn, onCheckOut }) {
             </tbody>
           </table>
         </div>
+
+        <PaginationControls
+          currentPage={currentPage}
+          totalItems={sorted.length}
+          itemsPerPage={itemsPerPage}
+          onPageChange={(p) => setCurrentPage(p)}
+          onItemsPerPageChange={(num) => { setItemsPerPage(num); setCurrentPage(1); }}
+        />
       </div>
     </div>
   );
@@ -621,9 +670,9 @@ function LeavePage({ data, onSubmitLeave, onUpdateLeaveStatus, user }) {
             <div className="form-group">
               <label className="form-label">Leave Type</label>
               <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-                <option value="Casual Leave">Casual Leave</option>
-                <option value="Sick Leave">Sick Leave</option>
-                <option value="Earned Leave">Earned Leave</option>
+                <option value="Casual Leave">Casual Leave (12 left)</option>
+                <option value="Sick Leave">Sick Leave (10 left)</option>
+                <option value="Earned Leave">Earned Leave (15 left)</option>
                 <option value="Maternity / Paternity">Maternity / Paternity</option>
               </select>
             </div>
@@ -773,37 +822,57 @@ function ReportsPage({ data }) {
   );
 }
 
-function NotificationsPage({ data }) {
+function NotificationsPage({ data, onMarkAllRead, onClearNotifications }) {
   return (
     <div>
       <div className="section-header">
         <div>
-          <h1>Notifications & Alerts</h1>
+          <h1>Notifications & Activity Feed</h1>
           <p className="subtitle">Real-time attendance events, check-ins, and approval updates.</p>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-secondary" onClick={onMarkAllRead}>✓ Mark All Read</button>
+          <button className="btn btn-danger btn-sm" onClick={onClearNotifications}>🗑️ Clear Feed</button>
         </div>
       </div>
 
       <div className="glass-card">
         <div className="notification-feed">
-          {(data?.notifications || []).map((item) => (
-            <div key={item.id} className="notification-item">
-              <div style={{ fontSize: '1.4rem' }}>
-                {item.type === 'success' ? '✅' : item.type === 'warning' ? '⚠️' : item.type === 'info' ? 'ℹ️' : '📢'}
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: '0.92rem', fontWeight: '700' }}>{item.text}</p>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{item.time || 'Recently'}</span>
-              </div>
+          {(data?.notifications || []).length === 0 ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              No notifications logged.
             </div>
-          ))}
+          ) : (
+            (data?.notifications || []).map((item) => (
+              <div key={item.id} className="notification-item">
+                <div style={{ fontSize: '1.4rem' }}>
+                  {item.type === 'success' ? '✅' : item.type === 'warning' ? '⚠️' : item.type === 'info' ? 'ℹ️' : '📢'}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: '0.92rem', fontWeight: '700' }}>{item.text}</p>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{item.time || 'Recently'}</span>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function SettingsPage({ settings, onSaveSettings }) {
-  const [form, setForm] = useState(settings || { officeStartTime: '09:00', gracePeriodMinutes: 15, geofenceRadiusMeters: 100 });
+function SettingsPage({ settings, onSaveSettings, onResetSystem }) {
+  const [form, setForm] = useState(
+    settings || {
+      companyName: 'TechCorp Solutions',
+      officeStartTime: '09:00',
+      gracePeriodMinutes: 15,
+      officeEndTime: '18:00',
+      geofenceRadiusMeters: 100,
+      officeLatitude: 22.7196,
+      officeLongitude: 75.8577,
+    }
+  );
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -814,60 +883,73 @@ function SettingsPage({ settings, onSaveSettings }) {
     <div>
       <div className="section-header">
         <div>
-          <h1>Office Configuration</h1>
-          <p className="subtitle">Manage office shifts, grace period rules, and GPS geofence radius.</p>
+          <h1>Office Configuration & Management</h1>
+          <p className="subtitle">Manage shifts, grace period rules, GPS geofence coordinates, and app state reset.</p>
         </div>
+        <button className="btn btn-danger" onClick={onResetSystem}>
+          ⚠️ Reset System Data
+        </button>
       </div>
 
-      <div className="glass-card" style={{ maxWidth: '600px' }}>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div className="form-group">
-            <label className="form-label">Company Name</label>
-            <input value={form.companyName || ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
-          </div>
-
-          <div className="form-row">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '800', marginBottom: '16px' }}>Shift & Geofence Rules</h3>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="form-group">
-              <label className="form-label">Office Start Time</label>
-              <input type="time" value={form.officeStartTime || '09:00'} onChange={(e) => setForm({ ...form, officeStartTime: e.target.value })} />
+              <label className="form-label">Company / Organization Name</label>
+              <input value={form.companyName || ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
             </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Office Start Time</label>
+                <input type="time" value={form.officeStartTime || '09:00'} onChange={(e) => setForm({ ...form, officeStartTime: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Grace Period (Minutes)</label>
+                <input type="number" value={form.gracePeriodMinutes || 15} onChange={(e) => setForm({ ...form, gracePeriodMinutes: Number(e.target.value) })} />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Office Latitude</label>
+                <input type="number" step="0.0001" value={form.officeLatitude || 22.7196} onChange={(e) => setForm({ ...form, officeLatitude: Number(e.target.value) })} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Office Longitude</label>
+                <input type="number" step="0.0001" value={form.officeLongitude || 75.8577} onChange={(e) => setForm({ ...form, officeLongitude: Number(e.target.value) })} />
+              </div>
+            </div>
+
             <div className="form-group">
-              <label className="form-label">Grace Period (Mins)</label>
-              <input type="number" value={form.gracePeriodMinutes || 15} onChange={(e) => setForm({ ...form, gracePeriodMinutes: Number(e.target.value) })} />
+              <label className="form-label">Geofence Radius (Meters)</label>
+              <input type="number" value={form.geofenceRadiusMeters || 100} onChange={(e) => setForm({ ...form, geofenceRadiusMeters: Number(e.target.value) })} />
             </div>
-          </div>
 
-          <div className="form-group">
-            <label className="form-label">Geofence Radius (Meters)</label>
-            <input type="number" value={form.geofenceRadiusMeters || 100} onChange={(e) => setForm({ ...form, geofenceRadiusMeters: Number(e.target.value) })} />
-          </div>
-
-          <button type="submit" className="btn btn-primary" style={{ marginTop: '6px' }}>Save Settings</button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function ProfilePage({ user }) {
-  return (
-    <div>
-      <div className="section-header">
-        <div>
-          <h1>User Profile</h1>
-          <p className="subtitle">Account details and security permissions.</p>
+            <button type="submit" className="btn btn-primary" style={{ marginTop: '6px' }}>Save Settings</button>
+          </form>
         </div>
-      </div>
 
-      <div className="glass-card" style={{ maxWidth: '600px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '18px', marginBottom: '24px' }}>
-          <div className="avatar-circle" style={{ width: '64px', height: '64px', fontSize: '1.8rem' }}>
-            {(user?.name || 'U').charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <h2 style={{ fontSize: '1.4rem', fontWeight: '800' }}>{user?.name || 'Team Member'}</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{user?.email || 'user@company.com'}</p>
-            <span className="badge badge-approved" style={{ marginTop: '6px' }}>{getRoleLabel(user?.role)}</span>
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '800', marginBottom: '16px' }}>System Diagnostics & Overview</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.88rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', background: 'var(--surface-card)', borderRadius: '8px' }}>
+              <span className="form-label">System Version</span>
+              <strong>v2.5.0 Pro</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', background: 'var(--surface-card)', borderRadius: '8px' }}>
+              <span className="form-label">Biometric AI Engine</span>
+              <strong style={{ color: '#10b981' }}>FaceMatch v3.2 Active</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', background: 'var(--surface-card)', borderRadius: '8px' }}>
+              <span className="form-label">GPS Geofence Engine</span>
+              <strong style={{ color: '#38bdf8' }}>Active (100m Radius)</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', background: 'var(--surface-card)', borderRadius: '8px' }}>
+              <span className="form-label">Local Cache Status</span>
+              <strong>Synced LocalStorage</strong>
+            </div>
           </div>
         </div>
       </div>
@@ -883,6 +965,7 @@ export default function App() {
 
   const [isCheckInOpen, setIsCheckInOpen] = useState(false);
   const [isAddEmpOpen, setIsAddEmpOpen] = useState(false);
+  const [isLogoutOpen, setIsLogoutOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   const showToast = (msg) => {
@@ -902,7 +985,7 @@ export default function App() {
   const handleAuth = (authUser) => {
     setUser(authUser);
     setLoggedIn(true);
-    showToast(`Welcome back, ${authUser.name}!`);
+    showToast(`Welcome back, ${authUser.name}! Logged in as ${getRoleLabel(authUser.role)}.`);
     refreshData();
   };
 
@@ -910,6 +993,8 @@ export default function App() {
     clearStoredAuth();
     setUser(null);
     setLoggedIn(false);
+    setIsLogoutOpen(false);
+    showToast('Successfully logged out.');
   };
 
   const handleToggleTheme = () => {
@@ -976,14 +1061,37 @@ export default function App() {
     showToast('Office configuration saved!');
   };
 
+  const handleMarkAllRead = async () => {
+    await markAllNotificationsRead();
+    await refreshData();
+    showToast('All notifications marked as read.');
+  };
+
+  const handleClearNotifications = async () => {
+    await clearNotifications();
+    await refreshData();
+    showToast('Notifications feed cleared.');
+  };
+
+  const handleResetSystem = async () => {
+    if (window.confirm('Are you sure you want to reset all local attendance and employee data to factory defaults?')) {
+      await resetSystemState();
+      await refreshData();
+      showToast('System reset to default mock data successfully.');
+    }
+  };
+
   return (
     <AppShell
       user={user}
       navItems={loggedIn ? getNavItems(user?.role) : guestNavItems}
-      onLogout={handleLogout}
+      onOpenLogout={() => setIsLogoutOpen(true)}
       theme={theme}
       onToggleTheme={handleToggleTheme}
       isGuest={!loggedIn}
+      notifications={data?.notifications || []}
+      onMarkAllRead={handleMarkAllRead}
+      onClearNotifications={handleClearNotifications}
     >
       <ToastAlert message={toastMessage} onClose={() => setToastMessage('')} />
 
@@ -1000,6 +1108,13 @@ export default function App() {
         onAddEmployee={handleAddEmployee}
       />
 
+      <LogoutModal
+        isOpen={isLogoutOpen}
+        onClose={() => setIsLogoutOpen(false)}
+        onConfirmLogout={handleLogout}
+        user={user}
+      />
+
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={loggedIn ? <Navigate to="/dashboard" replace /> : <AuthPage onAuth={handleAuth} initialMode="login" />} />
@@ -1007,15 +1122,15 @@ export default function App() {
 
         {loggedIn ? (
           <>
-            <Route path="/dashboard" element={<DashboardPage data={data} user={user} onOpenCheckIn={() => setIsCheckInOpen(true)} onOpenAddEmp={() => setIsAddEmpOpen(true)} />} />
+            <Route path="/dashboard" element={<DashboardPage data={data} user={user} onOpenCheckIn={() => setIsCheckInOpen(true)} onOpenAddEmp={() => setIsAddEmpOpen(true)} onQuickCheckOut={handleCheckOutSubmit} />} />
             <Route path="/employees" element={<EmployeesPage data={data} onOpenAddEmp={() => setIsAddEmpOpen(true)} onStatusChange={handleStatusChange} onDelete={handleDeleteEmployee} />} />
             <Route path="/attendance" element={<AttendancePage data={data} onOpenCheckIn={() => setIsCheckInOpen(true)} onCheckOut={handleCheckOutSubmit} />} />
             <Route path="/leave" element={<LeavePage data={data} onSubmitLeave={handleLeaveSubmit} onUpdateLeaveStatus={handleLeaveStatus} user={user} />} />
             <Route path="/wfh" element={<WfhPage data={data} onSubmitWfh={handleWfhSubmit} onUpdateWfhStatus={handleWfhStatus} user={user} />} />
             <Route path="/reports" element={<ReportsPage data={data} />} />
-            <Route path="/notifications" element={<NotificationsPage data={data} />} />
-            <Route path="/settings" element={<SettingsPage settings={data?.settings} onSaveSettings={handleSaveSettings} />} />
-            <Route path="/profile" element={<ProfilePage user={user} />} />
+            <Route path="/notifications" element={<NotificationsPage data={data} onMarkAllRead={handleMarkAllRead} onClearNotifications={handleClearNotifications} />} />
+            <Route path="/settings" element={<SettingsPage settings={data?.settings} onSaveSettings={handleSaveSettings} onResetSystem={handleResetSystem} />} />
+            <Route path="/profile" element={<ProfilePage user={user} attendanceHistory={data?.attendance || []} onUpdateProfile={(u) => setUser(u)} />} />
           </>
         ) : (
           <Route path="*" element={<Navigate to="/login" replace />} />
