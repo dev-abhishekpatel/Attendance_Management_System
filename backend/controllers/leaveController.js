@@ -1,7 +1,7 @@
-import { leaveRequests } from '../data/mockData.js';
+import { initialLeaveRequests } from '../data/mockData.js';
 
 export const getLeaveRequests = (req, res) => {
-  res.json(leaveRequests);
+  res.json(initialLeaveRequests);
 };
 
 export const createLeaveRequest = (req, res) => {
@@ -21,6 +21,6 @@ export const createLeaveRequest = (req, res) => {
     status: 'Pending',
   };
 
-  leaveRequests.unshift(newRequest);
+  initialLeaveRequests.unshift(newRequest);
   res.status(201).json(newRequest);
 };

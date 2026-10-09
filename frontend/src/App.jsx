@@ -1,13 +1,25 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import AddEmployeeModal from './components/AddEmployeeModal';
+import AnalyticsWidget from './components/AnalyticsWidget';
+import CheckInModal from './components/CheckInModal';
 import {
   clearStoredAuth,
+  deleteEmployee,
+  exportToCSV,
   getStoredAuthUser,
   loadDashboardData,
   loginUserRequest,
   registerUserRequest,
+  submitAddEmployee,
+  submitCheckIn,
+  submitCheckOut,
   submitLeaveRequest,
   submitWfhRequest,
+  updateEmployeeStatus,
+  updateLeaveStatus,
+  updateSettings,
+  updateWfhStatus,
 } from './services/api';
 
 const guestNavItems = [
@@ -24,8 +36,8 @@ const navConfig = {
     { path: '/leave', label: 'Leave' },
     { path: '/wfh', label: 'WFH' },
     { path: '/reports', label: 'Reports' },
+    { path: '/notifications', label: 'Updates' },
     { path: '/settings', label: 'Settings' },
-    { path: '/profile', label: 'Profile' },
   ],
   manager: [
     { path: '/dashboard', label: 'Dashboard' },
@@ -34,56 +46,36 @@ const navConfig = {
     { path: '/leave', label: 'Leave' },
     { path: '/wfh', label: 'WFH' },
     { path: '/reports', label: 'Reports' },
-    { path: '/profile', label: 'Profile' },
+    { path: '/notifications', label: 'Updates' },
   ],
   employee: [
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/attendance', label: 'Attendance' },
     { path: '/leave', label: 'Leave' },
     { path: '/wfh', label: 'WFH' },
+    { path: '/notifications', label: 'Updates' },
     { path: '/profile', label: 'Profile' },
   ],
   user: [
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/attendance', label: 'My Attendance' },
-    { path: '/services', label: 'Requests' },
+    { path: '/notifications', label: 'Updates' },
     { path: '/profile', label: 'Profile' },
   ],
 };
 
 const roleMeta = {
-  admin: {
-    label: 'Admin',
-    title: 'Executive Dashboard',
-    summary: 'Manage attendance, workforce operations, approvals, and office performance from a single command center.',
-    permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'settings', 'profile'],
-  },
-  manager: {
-    label: 'Manager',
-    title: 'Team Operations Workspace',
-    summary: 'Review team productivity, monitor attendance, and manage department-level requests with full visibility.',
-    permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'profile'],
-  },
-  employee: {
-    label: 'Employee',
-    title: 'Employee Workspace',
-    summary: 'Track attendance, submit leave or WFH requests, and stay aligned with daily operations.',
-    permissions: ['dashboard', 'attendance', 'leave', 'wfh', 'profile'],
-  },
-  user: {
-    label: 'User',
-    title: 'User Portal',
-    summary: 'Manage personal requests, stay updated on approvals, and keep your profile and access information current.',
-    permissions: ['dashboard', 'attendance', 'services', 'profile'],
-  },
+  admin: { label: 'Admin', title: 'Executive Command Center', permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'notifications', 'settings', 'profile'] },
+  manager: { label: 'Manager / HR', title: 'Workforce Operations Hub', permissions: ['dashboard', 'employees', 'attendance', 'leave', 'wfh', 'reports', 'notifications', 'profile'] },
+  employee: { label: 'Employee', title: 'Employee Portal', permissions: ['dashboard', 'attendance', 'leave', 'wfh', 'notifications', 'profile'] },
+  user: { label: 'User', title: 'User Workspace', permissions: ['dashboard', 'attendance', 'notifications', 'profile'] },
 };
 
 function normalizeRole(role) {
-  const normalized = String(role || 'employee').toLowerCase();
-  if (normalized === 'hr' || normalized === 'manager') return 'manager';
-  if (normalized === 'admin') return 'admin';
-  if (normalized === 'user') return 'user';
-  if (normalized === 'employee') return 'employee';
+  const norm = String(role || 'employee').toLowerCase();
+  if (norm === 'hr' || norm === 'manager') return 'manager';
+  if (norm === 'admin') return 'admin';
+  if (norm === 'user') return 'user';
   return 'employee';
 }
 
@@ -95,71 +87,54 @@ function getNavItems(role) {
   return navConfig[normalizeRole(role)] || navConfig.employee;
 }
 
-function canAccessPermission(role, permission) {
-  const permissions = roleMeta[normalizeRole(role)]?.permissions || roleMeta.employee.permissions;
-  return permissions.includes(permission);
-}
-
-function matchesCurrentUser(record, user) {
-  if (!user) return true;
-
-  const role = normalizeRole(user.role);
-  if (role === 'admin' || role === 'manager') return true;
-
-  const userNames = [user.name, user.email, user.email?.split('@')[0]]
-    .filter(Boolean)
-    .map((value) => String(value).trim().toLowerCase());
-
-  const recordName = String(record?.employee || record?.name || '').trim().toLowerCase();
-  return userNames.some((name) => name && (recordName === name || recordName.includes(name) || name.includes(recordName)));
-}
-
-function getScopedDashboardData(data, user) {
-  if (!data || !user) return data;
-
-  const role = normalizeRole(user.role);
-  if (role === 'admin' || role === 'manager') return data;
-
-  const userName = String(user.name || '').trim();
-  return {
-    ...data,
-    employees: Array.isArray(data.employees)
-      ? data.employees.filter((employee) => matchesCurrentUser(employee, user))
-      : [],
-    attendance: Array.isArray(data.attendance)
-      ? data.attendance.filter((entry) => matchesCurrentUser(entry, user))
-      : [],
-    leaveRequests: Array.isArray(data.leaveRequests)
-      ? data.leaveRequests.filter((entry) => matchesCurrentUser(entry, user))
-      : [],
-    wfhRequests: Array.isArray(data.wfhRequests)
-      ? data.wfhRequests.filter((entry) => matchesCurrentUser(entry, user))
-      : [],
-    reports: userName ? data.reports?.filter((report) => report?.title?.toLowerCase().includes('attendance') || report?.title?.toLowerCase().includes('leave')) || [] : [],
-    notifications: Array.isArray(data.notifications)
-      ? data.notifications.filter((item) => {
-          const content = String(item?.text || '').toLowerCase();
-          return !content || content.includes(userName.toLowerCase()) || item?.type === 'success' || item?.type === 'info';
-        })
-      : [],
-  };
-}
-
-function StatCard({ label, value, tone = 'blue', detail }) {
+function StatCard({ label, value, tone = 'blue', detail, icon }) {
   return (
-    <div className={`stat-box ${tone}`}>
-      <p>{label}</p>
-      <h3>{value}</h3>
-      {detail ? <span>{detail}</span> : null}
+    <div className={`stat-card ${tone}`}>
+      <div className="stat-header">
+        <span>{label}</span>
+        {icon && <span style={{ fontSize: '1.2rem' }}>{icon}</span>}
+      </div>
+      <div className="stat-value">{value}</div>
+      {detail && <div className="stat-footer">{detail}</div>}
     </div>
   );
 }
 
-function AppShell({ user, navItems, onLogout, children, isGuest = false }) {
+function ToastAlert({ message, type = 'success', onClose }) {
+  if (!message) return null;
   return (
-    <div className="app-shell">
+    <div
+      style={{
+        position: 'fixed',
+        bottom: '24px',
+        right: '24px',
+        zIndex: 1100,
+        background: type === 'success' ? '#10b981' : type === 'warning' ? '#f59e0b' : '#ef4444',
+        color: 'white',
+        padding: '12px 20px',
+        borderRadius: '12px',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        fontWeight: '700',
+        animation: 'modalIn 0.3s ease',
+      }}
+    >
+      <span>{message}</span>
+      <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontWeight: '800' }}>✕</button>
+    </div>
+  );
+}
+
+function AppShell({ user, navItems, onLogout, theme, onToggleTheme, children, isGuest = false }) {
+  return (
+    <div className="app-shell" data-theme={theme}>
       <header className="topbar">
-        <Link className="brand" to={user ? '/dashboard' : '/'}>Office Attendance</Link>
+        <Link className="brand-wrapper" to={user ? '/dashboard' : '/'}>
+          <div className="brand-icon">OA</div>
+          <span className="brand-title">Office Attendance</span>
+        </Link>
 
         <nav className="nav-links">
           {(navItems || guestNavItems).map((item) => (
@@ -167,44 +142,55 @@ function AppShell({ user, navItems, onLogout, children, isGuest = false }) {
           ))}
         </nav>
 
-        {isGuest ? (
-          <div className="auth-actions">
-            <Link to="/login" className="button primary small">Login</Link>
-            <Link to="/signup" className="button secondary small">Sign Up</Link>
-          </div>
-        ) : (
-          <div className="account-box">
-            <div className="account-copy">
-              <span className="user-name">{user?.name || 'Team Member'}</span>
-              <span className="user-role-mini">{getRoleLabel(user?.role)}</span>
+        <div className="topbar-right">
+          <button className="btn btn-secondary btn-sm" onClick={onToggleTheme} title="Toggle Theme">
+            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+          </button>
+
+          {isGuest ? (
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <Link to="/login" className="btn btn-primary btn-sm">Login</Link>
+              <Link to="/signup" className="btn btn-secondary btn-sm">Sign Up</Link>
             </div>
-            <button type="button" className="button secondary small" onClick={onLogout}>Logout</button>
-          </div>
-        )}
+          ) : (
+            <div className="account-badge">
+              <div className="avatar-circle">
+                {(user?.name || 'U').charAt(0).toUpperCase()}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: '700' }}>{user?.name || 'Team Member'}</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{getRoleLabel(user?.role)}</span>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={onLogout} style={{ marginLeft: '6px' }}>
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       <main className="page-shell">{children}</main>
 
       <footer className="app-footer">
-        <div>
-          <strong>Office Attendance</strong>
-          <p>Smart attendance, approval, and workforce management built for modern businesses.</p>
-        </div>
-        <div>
-          <h4>Quick Links</h4>
-          <ul>
-            <li>Dashboard</li>
-            <li>Attendance</li>
-            <li>Support Center</li>
-          </ul>
-        </div>
-        <div>
-          <h4>Contact</h4>
-          <ul>
-            <li>help@officeattendance.com</li>
-            <li>+91 98765 43210</li>
-            <li>Mon-Fri • 9AM to 6PM</li>
-          </ul>
+        <div className="footer-content">
+          <div className="footer-col">
+            <h4>Office Attendance System</h4>
+            <p>Next-generation biometric, GPS, face recognition, and remote workforce management platform.</p>
+          </div>
+          <div className="footer-col">
+            <h4>Quick Navigation</h4>
+            <ul style={{ listStyle: 'none', lineHeight: '2' }}>
+              <li><Link to="/dashboard" style={{ color: 'inherit', textDecoration: 'none' }}>Dashboard</Link></li>
+              <li><Link to="/attendance" style={{ color: 'inherit', textDecoration: 'none' }}>Attendance Logs</Link></li>
+              <li><Link to="/leave" style={{ color: 'inherit', textDecoration: 'none' }}>Leave & WFH Center</Link></li>
+            </ul>
+          </div>
+          <div className="footer-col">
+            <h4>Support & Operations</h4>
+            <p>📧 help@officeattendance.com</p>
+            <p>📞 +91 98765 43210</p>
+            <p>📍 Office Geofence Active (22.7196, 75.8577)</p>
+          </div>
         </div>
       </footer>
     </div>
@@ -213,49 +199,20 @@ function AppShell({ user, navItems, onLogout, children, isGuest = false }) {
 
 function HomePage() {
   return (
-    <div className="page home-page">
-      <div className="hero-card">
-        <span className="tag">Workforce management platform</span>
-        <h1>Professional attendance and operations for real teams</h1>
-        <p>
-          Track attendance, manage approvals, simplify remote work, and keep your office running smoothly with one modern system.
+    <div style={{ maxWidth: '960px', margin: '30px auto 0' }}>
+      <div className="glass-card" style={{ padding: '44px', textAlign: 'center' }}>
+        <span className="badge badge-present" style={{ padding: '6px 16px', fontSize: '0.8rem', marginBottom: '16px' }}>
+          ✨ Intelligent Biometric & GPS Platform
+        </span>
+        <h1 style={{ fontSize: '2.4rem', fontWeight: '800', margin: '16px 0', letterSpacing: '-0.04em' }}>
+          Smart Office Attendance & Workforce Operations
+        </h1>
+        <p style={{ color: 'var(--text-muted)', fontSize: '1.05rem', maxWidth: '660px', margin: '0 auto 28px' }}>
+          Track daily check-ins with Face Recognition, GPS Geofencing, and Fingerprint validation. Streamline leave approvals and monitor real-time workforce productivity.
         </p>
-        <div className="actions">
-          <Link to="/login" className="button primary">Login</Link>
-          <Link to="/signup" className="button secondary">Create Account</Link>
-        </div>
-      </div>
-
-      <div className="feature-grid">
-        <div className="mini-card">
-          <h4>Role-based access</h4>
-          <p>Separate experiences for Admin, Employee, and User roles with relevant controls and workflows.</p>
-        </div>
-        <div className="mini-card">
-          <h4>Operational visibility</h4>
-          <p>Surface key metrics, approvals, and team updates without adding operational noise.</p>
-        </div>
-        <div className="mini-card">
-          <h4>Production-ready UX</h4>
-          <p>Modern cards, clean typography, responsive layouts, and realistic workflows for business use.</p>
-        </div>
-      </div>
-
-      <div className="role-overview">
-        <div className="role-panel admin-panel">
-          <span className="panel-chip">Admin</span>
-          <h3>Executive control</h3>
-          <p>Monitor staffing health, attendance compliance, approvals, and team performance across the organization.</p>
-        </div>
-        <div className="role-panel employee-panel">
-          <span className="panel-chip">Employee</span>
-          <h3>Daily workflow</h3>
-          <p>Capture attendance, manage leave, use WFH requests, and keep personal work status visible.</p>
-        </div>
-        <div className="role-panel user-panel">
-          <span className="panel-chip">User</span>
-          <h3>Service access</h3>
-          <p>Access requests, approvals, and profile visibility without unnecessary admin-side complexity.</p>
+        <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Link to="/login" className="btn btn-primary" style={{ padding: '12px 28px', fontSize: '1rem' }}>Get Started / Login</Link>
+          <Link to="/signup" className="btn btn-secondary" style={{ padding: '12px 28px', fontSize: '1rem' }}>Register Account</Link>
         </div>
       </div>
     </div>
@@ -265,311 +222,271 @@ function HomePage() {
 function AuthPage({ onAuth, initialMode = 'login' }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState(initialMode);
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'user' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'employee' });
   const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleChange = (event) => {
-    const { name, value } = event.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     setError('');
-    setIsSubmitting(true);
-
+    setLoading(true);
     try {
-      const payload = { name: form.name, email: form.email, password: form.password, role: form.role };
-      const result = mode === 'login'
-        ? await loginUserRequest({ email: payload.email, password: payload.password })
-        : await registerUserRequest(payload);
-
-      onAuth(result);
+      const res = mode === 'login'
+        ? await loginUserRequest({ email: form.email, password: form.password })
+        : await registerUserRequest(form);
+      onAuth(res);
       navigate('/dashboard');
-    } catch (submitError) {
-      setError(submitError.message || 'Authentication failed. Please try again.');
+    } catch (err) {
+      setError(err.message || 'Authentication failed');
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="page centered">
-      <div className="card form-card auth-card">
-        <div className="auth-header">
-          <h2>{mode === 'login' ? 'Welcome back' : 'Create account'}</h2>
-          <span className="tag">{mode === 'login' ? 'Secure access' : 'Join the platform'}</span>
+    <div style={{ maxWidth: '440px', margin: '40px auto' }}>
+      <div className="glass-card">
+        <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '6px' }}>
+          {mode === 'login' ? 'Welcome Back' : 'Create Account'}
+        </h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginBottom: '20px' }}>
+          Sign in to access your attendance workspace
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--input-bg)', padding: '4px', borderRadius: '12px', marginBottom: '20px', border: '1px solid var(--border)' }}>
+          <button className={`btn ${mode === 'login' ? 'btn-primary' : 'btn-secondary'}`} style={{ border: 'none' }} onClick={() => setMode('login')}>Login</button>
+          <button className={`btn ${mode === 'signup' ? 'btn-primary' : 'btn-secondary'}`} style={{ border: 'none' }} onClick={() => setMode('signup')}>Sign Up</button>
         </div>
 
-        <div className="auth-toggle">
-          <button type="button" className={mode === 'login' ? 'toggle active' : 'toggle'} onClick={() => setMode('login')}>Login</button>
-          <button type="button" className={mode === 'signup' ? 'toggle active' : 'toggle'} onClick={() => setMode('signup')}>Sign Up</button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="stacked-form">
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {mode === 'signup' && (
-            <input type="text" name="name" value={form.name} onChange={handleChange} placeholder="Full name" required />
+            <div className="form-group">
+              <label className="form-label">Full Name</label>
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Abhishek Sharma" required />
+            </div>
           )}
 
-          <input type="email" name="email" value={form.email} onChange={handleChange} placeholder="Email address" required />
-          <input type="password" name="password" value={form.password} onChange={handleChange} placeholder="Password" minLength="6" required />
+          <div className="form-group">
+            <label className="form-label">Email Address</label>
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" required />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" required />
+          </div>
 
           {mode === 'signup' && (
-            <select name="role" value={form.role} onChange={handleChange}>
-              <option value="admin">Admin</option>
-              <option value="manager">Manager</option>
-              <option value="employee">Employee</option>
-              <option value="user">User</option>
-            </select>
+            <div className="form-group">
+              <label className="form-label">System Role</label>
+              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                <option value="admin">Admin</option>
+                <option value="manager">Manager / HR</option>
+                <option value="employee">Employee</option>
+              </select>
+            </div>
           )}
 
-          {error && <div className="error-box">{error}</div>}
+          {error && <div style={{ background: 'var(--danger-soft)', color: 'var(--danger)', padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}>{error}</div>}
 
-          <button type="submit" className="button primary full" disabled={isSubmitting}>
-            {isSubmitting ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '6px' }} disabled={loading}>
+            {loading ? 'Processing...' : mode === 'login' ? 'Sign In' : 'Register Account'}
           </button>
         </form>
-
-        {mode === 'login' && <p className="demo-note">Use your registered account credentials to continue.</p>}
       </div>
     </div>
   );
 }
 
-function ProfilePage({ user }) {
+function DashboardPage({ data, user, onOpenCheckIn, onOpenAddEmp }) {
+  if (!data) return <div className="glass-card">Loading dashboard data...</div>;
+
+  const stats = data.stats || {};
   const currentRole = normalizeRole(user?.role);
-  const permissions = roleMeta[currentRole]?.permissions || [];
+  const canManage = currentRole === 'admin' || currentRole === 'manager';
 
   return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Profile</span>
-            <h2>{user?.name || 'Team Member'}</h2>
-          </div>
-          <div className="role-badge">{getRoleLabel(user?.role)}</div>
-        </div>
-
-        <div className="settings-grid">
-          <div className="mini-card">
-            <h4>Assigned Role</h4>
-            <p>{getRoleLabel(user?.role)}</p>
-          </div>
-          <div className="mini-card">
-            <h4>Email</h4>
-            <p>{user?.email || 'team@officeattendance.com'}</p>
-          </div>
-          <div className="mini-card">
-            <h4>Department</h4>
-            <p>{currentRole === 'admin' ? 'Administration' : currentRole === 'manager' ? 'Operations' : currentRole === 'user' ? 'Customer Success' : 'General Team'}</p>
-          </div>
-          <div className="mini-card">
-            <h4>Permissions</h4>
-            <p>{permissions.join(', ')}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ServicesPage() {
-  return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Requests</span>
-            <h2>Service and Support Hub</h2>
-          </div>
-        </div>
-        <div className="settings-grid">
-          <div className="mini-card">
-            <h4>Access Request</h4>
-            <p>Request new workspace or software access.</p>
-          </div>
-          <div className="mini-card">
-            <h4>IT Support</h4>
-            <p>Report device, network, or hardware issues.</p>
-          </div>
-          <div className="mini-card">
-            <h4>Travel Assistance</h4>
-            <p>Track travel approvals and expense support.</p>
-          </div>
-          <div className="mini-card">
-            <h4>HR Services</h4>
-            <p>Check policy, onboarding, and payroll updates.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DashboardPage({ data, user }) {
-  if (!data) return <div className="page"><div className="card wide-card">Loading dashboard...</div></div>;
-
-  const roleName = normalizeRole(user?.role);
-  const roleInfo = roleMeta[roleName] || roleMeta.employee;
-
-  const dashboardContent = {
-    admin: {
-      cards: [
-        { label: 'Total Employees', value: data.stats.totalEmployees || 0, tone: 'blue', detail: 'Across departments' },
-        { label: 'Present Today', value: data.stats.present || 0, tone: 'green', detail: 'Checked in' },
-        { label: 'Absent', value: data.stats.absent || 0, tone: 'red', detail: 'Accounts to review' },
-        { label: 'Late Arrivals', value: data.stats.late || 0, tone: 'amber', detail: 'Needs follow-up' },
-        { label: 'Leave Requests', value: data.stats.leave || 0, tone: 'purple', detail: 'Awaiting approval' },
-        { label: 'WFH Team', value: data.stats.wfh || 0, tone: 'cyan', detail: 'Remote work active' },
-      ],
-      recentTitle: 'Operational Overview',
-      quickActions: [
-        'Review pending approvals before noon.',
-        'Audit attendance compliance by team.',
-        'Publish the daily staffing summary.',
-      ],
-    },
-    manager: {
-      cards: [
-        { label: 'Team Members', value: data.stats.totalEmployees || 0, tone: 'blue', detail: 'Managed under this team' },
-        { label: 'Present', value: data.stats.present || 0, tone: 'green', detail: 'Checked in today' },
-        { label: 'Late', value: data.stats.late || 0, tone: 'amber', detail: 'Review required' },
-        { label: 'Pending Leave', value: data.stats.leave || 0, tone: 'purple', detail: 'Approval queue' },
-        { label: 'WFH', value: data.stats.wfh || 0, tone: 'cyan', detail: 'Remote work load' },
-        { label: 'Reports', value: 'Ready', tone: 'red', detail: 'Updated summary' },
-      ],
-      recentTitle: 'Department Snapshot',
-      quickActions: [
-        'Monitor shift coverage and productivity.',
-        'Review leave requests with cross-team impact.',
-        'Validate manager-level summaries before sign-off.',
-      ],
-    },
-    employee: {
-      cards: [
-        { label: 'My Attendance', value: data.stats.present || 0, tone: 'blue', detail: 'Recorded days' },
-        { label: 'Leave Balance', value: '12 Days', tone: 'green', detail: 'Available this cycle' },
-        { label: 'WFH Days', value: data.stats.wfh || 0, tone: 'purple', detail: 'Approved' },
-        { label: 'Tasks Due', value: '03', tone: 'amber', detail: 'In my queue' },
-        { label: 'Shift Status', value: 'On Time', tone: 'cyan', detail: 'Current performance' },
-        { label: 'Alerts', value: '01', tone: 'red', detail: 'Needs attention' },
-      ],
-      recentTitle: 'My Recent Activity',
-      quickActions: [
-        'Update your attendance entry before close of day.',
-        'Submit or review your leave and WFH requests.',
-        'Check your pending tasks and approvals.',
-      ],
-    },
-    user: {
-      cards: [
-        { label: 'Open Requests', value: '04', tone: 'blue', detail: 'Currently active' },
-        { label: 'Approved', value: '09', tone: 'green', detail: 'This month' },
-        { label: 'Pending Approval', value: '02', tone: 'amber', detail: 'Awaiting review' },
-        { label: 'Profile Completion', value: '92%', tone: 'purple', detail: 'Updated profile' },
-        { label: 'Support Tickets', value: '01', tone: 'cyan', detail: 'Awaiting response' },
-        { label: 'Notifications', value: '03', tone: 'red', detail: 'Unread updates' },
-      ],
-      recentTitle: 'Recent Requests',
-      quickActions: [
-        'Track your pending workplace requests.',
-        'Refresh profile and access details if needed.',
-        'Review recent approvals and support updates.',
-      ],
-    },
-  };
-
-  const content = dashboardContent[roleName] || dashboardContent.employee;
-  const recentRows = Array.isArray(data.attendance) && data.attendance.length > 0
-    ? data.attendance.slice(0, 4)
-    : [{ id: 'empty', employee: 'No attendance records', status: 'Waiting', checkIn: '--:--' }];
-
-  return (
-    <div className="page dashboard-page">
+    <div>
       <div className="section-header">
         <div>
-          <span className="tag">{roleInfo.label} Portal</span>
-          <h2>{roleInfo.title}</h2>
+          <span className="badge badge-approved" style={{ marginBottom: '8px' }}>
+            {getRoleLabel(user?.role)} Workspace
+          </span>
+          <h1>{roleMeta[currentRole]?.title || 'Dashboard'}</h1>
+          <p className="subtitle">Real-time attendance tracking, approvals, and staffing statistics.</p>
         </div>
-        <div className="role-badge">{roleInfo.label.toUpperCase()}</div>
-      </div>
 
-      <div className="hero-inline">
-        <p>{roleInfo.summary}</p>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button className="btn btn-primary" onClick={onOpenCheckIn}>
+            📸 Mark Attendance
+          </button>
+          {canManage && (
+            <button className="btn btn-secondary" onClick={onOpenAddEmp}>
+              ➕ Add Employee
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="stats-grid">
-        {content.cards.map((card) => (
-          <StatCard key={card.label} label={card.label} value={card.value} tone={card.tone} detail={card.detail} />
-        ))}
+        <StatCard label="Total Employees" value={stats.totalEmployees || 0} tone="blue" icon="👥" detail="Enrolled workforce" />
+        <StatCard label="Present Today" value={stats.present || 0} tone="green" icon="✅" detail="On-time check-ins" />
+        <StatCard label="Late Arrivals" value={stats.late || 0} tone="amber" icon="⏰" detail="Requires review" />
+        <StatCard label="Remote / WFH" value={stats.wfh || 0} tone="cyan" icon="💻" detail="Approved remote work" />
+        <StatCard label="On Leave" value={stats.leave || 0} tone="purple" icon="🏖️" detail="Active leave approved" />
+        <StatCard label="Absent" value={stats.absent || 0} tone="red" icon="❌" detail="Unverified absences" />
       </div>
 
-      <div className="content-grid two-col">
-        <div className="card panel-card">
-          <h3>{content.recentTitle}</h3>
-          <div className="list-table">
-            {recentRows.map((row) => (
-              <div className="table-row" key={row.id || row.employee}>
-                <span>{row.employee}</span>
-                <span>{row.status}</span>
-                <span>{row.checkIn || row.date || '--'}</span>
+      <AnalyticsWidget stats={stats} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px', marginTop: '26px' }}>
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '16px' }}>Recent Attendance Activity</h3>
+          <div className="table-responsive">
+            <table className="modern-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Status</th>
+                  <th>Check-In</th>
+                  <th>Method</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data.attendance || []).slice(0, 5).map((row) => (
+                  <tr key={row.id}>
+                    <td style={{ fontWeight: '700' }}>{row.employee}</td>
+                    <td>
+                      <span className={`badge badge-${row.status?.toLowerCase()}`}>
+                        <span className="badge-dot" /> {row.status}
+                      </span>
+                    </td>
+                    <td>{row.checkIn}</td>
+                    <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{row.method}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '16px' }}>System Activity Feed</h3>
+          <div className="notification-feed">
+            {(data.notifications || []).slice(0, 4).map((item) => (
+              <div key={item.id} className="notification-item">
+                <div style={{ fontSize: '1.2rem' }}>
+                  {item.type === 'success' ? '✅' : item.type === 'warning' ? '⚠️' : 'ℹ️'}
+                </div>
+                <div>
+                  <p style={{ fontSize: '0.88rem', fontWeight: '600' }}>{item.text}</p>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.time || 'Today'}</span>
+                </div>
               </div>
             ))}
           </div>
         </div>
-
-        <div className="card panel-card">
-          <h3>Priority Actions</h3>
-          <ul className="notification-list">
-            {content.quickActions.map((action, index) => (
-              <li key={`${action}-${index}`} className={index % 2 === 0 ? 'note info' : 'note success'}>
-                {action}
-              </li>
-            ))}
-          </ul>
-        </div>
       </div>
     </div>
   );
 }
 
-function EmployeesPage({ data, userRole }) {
-  const currentRole = normalizeRole(userRole);
-  const canManageEmployees = currentRole === 'admin' || currentRole === 'manager';
+function EmployeesPage({ data, onOpenAddEmp, onStatusChange, onDelete }) {
+  const [search, setSearch] = useState('');
+  const [deptFilter, setDeptFilter] = useState('ALL');
+
+  const filtered = (data?.employees || []).filter((emp) => {
+    const matchesSearch =
+      emp.name.toLowerCase().includes(search.toLowerCase()) ||
+      emp.employeeCode.toLowerCase().includes(search.toLowerCase()) ||
+      emp.email.toLowerCase().includes(search.toLowerCase());
+    const matchesDept = deptFilter === 'ALL' || emp.department === deptFilter;
+    return matchesSearch && matchesDept;
+  });
+
+  const handleExport = () => {
+    exportToCSV('Employees_Directory', filtered);
+  };
 
   return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Team Directory</span>
-            <h2>Employees</h2>
-          </div>
-          {canManageEmployees && <button type="button" className="button primary">Add Employee</button>}
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Employee Directory</h1>
+          <p className="subtitle">Manage company staff, assignments, shifts, and access roles.</p>
         </div>
-        <div className="table-wrap">
-          <table>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-secondary" onClick={handleExport}>📥 Export CSV</button>
+          <button className="btn btn-primary" onClick={onOpenAddEmp}>➕ Add Employee</button>
+        </div>
+      </div>
+
+      <div className="glass-card">
+        <div className="controls-bar">
+          <div className="search-box">
+            <span className="search-icon">🔍</span>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, code, or email..." />
+          </div>
+
+          <div className="filter-group">
+            <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+              <option value="ALL">All Departments</option>
+              <option value="Engineering">Engineering</option>
+              <option value="HR">HR</option>
+              <option value="Sales">Sales</option>
+              <option value="Finance">Finance</option>
+              <option value="Support">Support</option>
+              <option value="Design">Design</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="table-responsive">
+          <table className="modern-table">
             <thead>
               <tr>
-                <th>Employee</th>
-                <th>Role</th>
                 <th>Code</th>
+                <th>Employee Name</th>
                 <th>Department</th>
                 <th>Designation</th>
+                <th>Branch</th>
+                <th>Shift</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {(data?.employees || []).map((employee) => (
-                <tr key={employee.id || employee.employeeCode || employee.name}>
-                  <td>{employee.name}</td>
-                  <td>{getRoleLabel(employee.role || 'employee')}</td>
-                  <td>{employee.employeeCode || 'N/A'}</td>
-                  <td>{employee.department || 'General'}</td>
-                  <td>{employee.designation || 'Team Member'}</td>
-                  <td><span className="status-pill">{employee.status || 'Active'}</span></td>
+              {filtered.map((emp) => (
+                <tr key={emp.id}>
+                  <td><code>{emp.employeeCode}</code></td>
+                  <td>
+                    <div>
+                      <strong style={{ display: 'block' }}>{emp.name}</strong>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{emp.email}</span>
+                    </div>
+                  </td>
+                  <td>{emp.department}</td>
+                  <td>{emp.designation}</td>
+                  <td>{emp.branch || 'Head Office'}</td>
+                  <td>{emp.shift || 'Morning'}</td>
+                  <td>
+                    <span className={`badge badge-${emp.status === 'Active' ? 'active' : 'inactive'}`}>
+                      <span className="badge-dot" /> {emp.status}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => onStatusChange(emp.id, emp.status === 'Active' ? 'Inactive' : 'Active')}
+                      >
+                        {emp.status === 'Active' ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={() => onDelete(emp.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -580,27 +497,53 @@ function EmployeesPage({ data, userRole }) {
   );
 }
 
-function AttendancePage({ data }) {
+function AttendancePage({ data, onOpenCheckIn, onCheckOut }) {
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+
+  const filtered = (data?.attendance || []).filter((row) => {
+    const matchesSearch = row.employee.toLowerCase().includes(search.toLowerCase());
+    const matchesStatus = statusFilter === 'ALL' || row.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const handleExport = () => {
+    exportToCSV('Attendance_Logs', filtered);
+  };
+
   return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Daily Tracking</span>
-            <h2>Attendance</h2>
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Attendance Tracking</h1>
+          <p className="subtitle">Daily check-in / check-out records, biometric verification logs, and location data.</p>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-secondary" onClick={handleExport}>📥 Export CSV</button>
+          <button className="btn btn-primary" onClick={onOpenCheckIn}>📸 Mark Attendance</button>
+        </div>
+      </div>
+
+      <div className="glass-card">
+        <div className="controls-bar">
+          <div className="search-box">
+            <span className="search-icon">🔍</span>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter attendance by employee name..." />
           </div>
-          <button type="button" className="button primary">Mark Attendance</button>
+
+          <div className="filter-group">
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="ALL">All Statuses</option>
+              <option value="Present">Present</option>
+              <option value="Late">Late</option>
+              <option value="WFH">WFH</option>
+              <option value="Absent">Absent</option>
+            </select>
+          </div>
         </div>
 
-        <div className="stats-grid compact">
-          <StatCard label="Present" value={data?.stats?.present || 0} tone="green" />
-          <StatCard label="Late" value={data?.stats?.late || 0} tone="amber" />
-          <StatCard label="Absent" value={data?.stats?.absent || 0} tone="red" />
-          <StatCard label="WFH" value={data?.stats?.wfh || 0} tone="cyan" />
-        </div>
-
-        <div className="table-wrap">
-          <table>
+        <div className="table-responsive">
+          <table className="modern-table">
             <thead>
               <tr>
                 <th>Employee</th>
@@ -609,17 +552,33 @@ function AttendancePage({ data }) {
                 <th>Check-Out</th>
                 <th>Status</th>
                 <th>Method</th>
+                <th>Location / Geofence</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {(data?.attendance || []).map((row) => (
+              {filtered.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.employee}</td>
+                  <td style={{ fontWeight: '700' }}>{row.employee}</td>
                   <td>{row.date}</td>
                   <td>{row.checkIn}</td>
-                  <td>{row.checkOut}</td>
-                  <td><span className="status-pill">{row.status}</span></td>
+                  <td>{row.checkOut || '-'}</td>
+                  <td>
+                    <span className={`badge badge-${row.status?.toLowerCase()}`}>
+                      <span className="badge-dot" /> {row.status}
+                    </span>
+                  </td>
                   <td>{row.method}</td>
+                  <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{row.location || 'Office Geofence'}</td>
+                  <td>
+                    {row.checkOut === '-' || !row.checkOut ? (
+                      <button className="btn btn-success btn-sm" onClick={() => onCheckOut(row.employee)}>
+                        Check-Out
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: '700' }}>Complete</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -630,82 +589,160 @@ function AttendancePage({ data }) {
   );
 }
 
-function LeavePage({ data, onSubmit }) {
-  const [form, setForm] = useState({ employee: '', type: '', from: '', to: '', reason: '' });
+function LeavePage({ data, onSubmitLeave, onUpdateLeaveStatus, user }) {
+  const [form, setForm] = useState({ employee: user?.name || '', type: 'Casual Leave', from: '', to: '', reason: '' });
+  const currentRole = normalizeRole(user?.role);
+  const canApprove = currentRole === 'admin' || currentRole === 'manager';
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    onSubmit(form);
-    setForm({ employee: '', type: '', from: '', to: '', reason: '' });
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSubmitLeave(form);
+    setForm({ employee: user?.name || '', type: 'Casual Leave', from: '', to: '', reason: '' });
   };
 
   return (
-    <div className="page two-column-layout">
-      <div className="card panel-card">
-        <h2>Leave Request</h2>
-        <form onSubmit={handleSubmit} className="stacked-form">
-          <input value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} placeholder="Employee name" />
-          <input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="Leave type" />
-          <input type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
-          <input type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />
-          <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Reason for leave" rows="4" />
-          <button className="button primary" type="submit">Submit Leave</button>
-        </form>
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Leave Management</h1>
+          <p className="subtitle">Submit leave applications and review approval requests.</p>
+        </div>
       </div>
 
-      <div className="card panel-card">
-        <h2>Approval Queue</h2>
-        <div className="list-stack">
-          {(data?.leaveRequests || []).map((item) => (
-            <div className="request-card" key={item.id}>
-              <div className="request-head">
-                <strong>{item.employee}</strong>
-                <span className="status-pill">{item.status}</span>
-              </div>
-              <p>{item.type}</p>
-              <small>{item.from} to {item.to}</small>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.2rem', fontWeight: '800', marginBottom: '16px' }}>Apply for Leave</h3>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label className="form-label">Employee Name</label>
+              <input value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} placeholder="Full Name" required />
             </div>
-          ))}
+
+            <div className="form-group">
+              <label className="form-label">Leave Type</label>
+              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+                <option value="Casual Leave">Casual Leave</option>
+                <option value="Sick Leave">Sick Leave</option>
+                <option value="Earned Leave">Earned Leave</option>
+                <option value="Maternity / Paternity">Maternity / Paternity</option>
+              </select>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">From Date</label>
+                <input type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">To Date</label>
+                <input type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} required />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Reason</label>
+              <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="State reason for leave..." rows="3" required />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ marginTop: '6px' }}>Submit Leave Request</button>
+          </form>
+        </div>
+
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.2rem', fontWeight: '800', marginBottom: '16px' }}>Approval Queue</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {(data?.leaveRequests || []).map((item) => (
+              <div key={item.id} style={{ background: 'var(--surface-card)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '0.95rem' }}>{item.employee}</strong>
+                  <span className={`badge badge-${item.status?.toLowerCase()}`}>
+                    <span className="badge-dot" /> {item.status}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{item.type} • {item.from} to {item.to}</p>
+                <p style={{ fontSize: '0.82rem', marginTop: '6px' }}>"{item.reason}"</p>
+
+                {canApprove && item.status === 'Pending' && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                    <button className="btn btn-success btn-sm" onClick={() => onUpdateLeaveStatus(item.id, 'Approved')}>✓ Approve</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => onUpdateLeaveStatus(item.id, 'Rejected')}>✕ Reject</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function WfhPage({ data, onSubmit }) {
-  const [form, setForm] = useState({ employee: '', date: '', reason: '' });
+function WfhPage({ data, onSubmitWfh, onUpdateWfhStatus, user }) {
+  const [form, setForm] = useState({ employee: user?.name || '', date: '', reason: '' });
+  const currentRole = normalizeRole(user?.role);
+  const canApprove = currentRole === 'admin' || currentRole === 'manager';
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    onSubmit(form);
-    setForm({ employee: '', date: '', reason: '' });
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSubmitWfh(form);
+    setForm({ employee: user?.name || '', date: '', reason: '' });
   };
 
   return (
-    <div className="page two-column-layout">
-      <div className="card panel-card">
-        <h2>WFH Request</h2>
-        <form onSubmit={handleSubmit} className="stacked-form">
-          <input value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} placeholder="Employee name" />
-          <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-          <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Reason for remote work" rows="4" />
-          <button className="button primary" type="submit">Request WFH</button>
-        </form>
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Work From Home (WFH)</h1>
+          <p className="subtitle">Remote attendance authorization and schedule requests.</p>
+        </div>
       </div>
 
-      <div className="card panel-card">
-        <h2>WFH Overview</h2>
-        <div className="list-stack">
-          {(data?.wfhRequests || []).map((item) => (
-            <div className="request-card" key={item.id}>
-              <div className="request-head">
-                <strong>{item.employee}</strong>
-                <span className="status-pill">{item.status}</span>
-              </div>
-              <p>{item.reason}</p>
-              <small>{item.date}</small>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.2rem', fontWeight: '800', marginBottom: '16px' }}>Request WFH</h3>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label className="form-label">Employee Name</label>
+              <input value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })} placeholder="Full Name" required />
             </div>
-          ))}
+
+            <div className="form-group">
+              <label className="form-label">Target Date</label>
+              <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Reason for WFH</label>
+              <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Describe remote work objectives..." rows="3" required />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ marginTop: '6px' }}>Submit WFH Request</button>
+          </form>
+        </div>
+
+        <div className="glass-card">
+          <h3 style={{ fontSize: '1.2rem', fontWeight: '800', marginBottom: '16px' }}>WFH Requests Overview</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {(data?.wfhRequests || []).map((item) => (
+              <div key={item.id} style={{ background: 'var(--surface-card)', padding: '16px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '0.95rem' }}>{item.employee}</strong>
+                  <span className={`badge badge-${item.status?.toLowerCase()}`}>
+                    <span className="badge-dot" /> {item.status}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Date: {item.date}</p>
+                <p style={{ fontSize: '0.82rem', marginTop: '6px' }}>"{item.reason}"</p>
+
+                {canApprove && item.status === 'Pending' && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                    <button className="btn btn-success btn-sm" onClick={() => onUpdateWfhStatus(item.id, 'Approved')}>✓ Approve</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => onUpdateWfhStatus(item.id, 'Rejected')}>✕ Reject</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -714,19 +751,49 @@ function WfhPage({ data, onSubmit }) {
 
 function ReportsPage({ data }) {
   return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Insights</span>
-            <h2>Reports & Analytics</h2>
-          </div>
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Analytics & Reports</h1>
+          <p className="subtitle">High-level workforce compliance, overtime insights, and export options.</p>
         </div>
-        <div className="stats-grid compact">
-          {(data?.reports || []).map((report) => (
-            <div className="stat-box simple" key={report.id}>
-              <p>{report.title}</p>
-              <h3>{report.value}</h3>
+        <button className="btn btn-primary" onClick={() => exportToCSV('Attendance_Reports', data.reports || [])}>
+          📥 Export Reports CSV
+        </button>
+      </div>
+
+      <div className="stats-grid">
+        {(data?.reports || []).map((r) => (
+          <StatCard key={r.id} label={r.title} value={r.value} tone="purple" detail={`Trend: ${r.trend || 'Stable'}`} />
+        ))}
+      </div>
+
+      <AnalyticsWidget stats={data?.stats} />
+    </div>
+  );
+}
+
+function NotificationsPage({ data }) {
+  return (
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Notifications & Alerts</h1>
+          <p className="subtitle">Real-time attendance events, check-ins, and approval updates.</p>
+        </div>
+      </div>
+
+      <div className="glass-card">
+        <div className="notification-feed">
+          {(data?.notifications || []).map((item) => (
+            <div key={item.id} className="notification-item">
+              <div style={{ fontSize: '1.4rem' }}>
+                {item.type === 'success' ? '✅' : item.type === 'warning' ? '⚠️' : item.type === 'info' ? 'ℹ️' : '📢'}
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: '0.92rem', fontWeight: '700' }}>{item.text}</p>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{item.time || 'Recently'}</span>
+              </div>
             </div>
           ))}
         </div>
@@ -735,54 +802,72 @@ function ReportsPage({ data }) {
   );
 }
 
-function NotificationsPage({ data }) {
+function SettingsPage({ settings, onSaveSettings }) {
+  const [form, setForm] = useState(settings || { officeStartTime: '09:00', gracePeriodMinutes: 15, geofenceRadiusMeters: 100 });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSaveSettings(form);
+  };
+
   return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Updates</span>
-            <h2>Notifications</h2>
-          </div>
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>Office Configuration</h1>
+          <p className="subtitle">Manage office shifts, grace period rules, and GPS geofence radius.</p>
         </div>
-        <ul className="notification-list large">
-          {(data?.notifications || []).map((item) => (
-            <li key={item.id} className={`note ${item.type}`}>
-              {item.text}
-            </li>
-          ))}
-        </ul>
+      </div>
+
+      <div className="glass-card" style={{ maxWidth: '600px' }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div className="form-group">
+            <label className="form-label">Company Name</label>
+            <input value={form.companyName || ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Office Start Time</label>
+              <input type="time" value={form.officeStartTime || '09:00'} onChange={(e) => setForm({ ...form, officeStartTime: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Grace Period (Mins)</label>
+              <input type="number" value={form.gracePeriodMinutes || 15} onChange={(e) => setForm({ ...form, gracePeriodMinutes: Number(e.target.value) })} />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Geofence Radius (Meters)</label>
+            <input type="number" value={form.geofenceRadiusMeters || 100} onChange={(e) => setForm({ ...form, geofenceRadiusMeters: Number(e.target.value) })} />
+          </div>
+
+          <button type="submit" className="btn btn-primary" style={{ marginTop: '6px' }}>Save Settings</button>
+        </form>
       </div>
     </div>
   );
 }
 
-function SettingsPage() {
+function ProfilePage({ user }) {
   return (
-    <div className="page">
-      <div className="card wide-card table-card">
-        <div className="section-header">
-          <div>
-            <span className="tag">Configuration</span>
-            <h2>System Settings</h2>
-          </div>
+    <div>
+      <div className="section-header">
+        <div>
+          <h1>User Profile</h1>
+          <p className="subtitle">Account details and security permissions.</p>
         </div>
-        <div className="settings-grid">
-          <div className="mini-card">
-            <h4>Office Settings</h4>
-            <p>Office hours, timezone, branch settings</p>
+      </div>
+
+      <div className="glass-card" style={{ maxWidth: '600px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '18px', marginBottom: '24px' }}>
+          <div className="avatar-circle" style={{ width: '64px', height: '64px', fontSize: '1.8rem' }}>
+            {(user?.name || 'U').charAt(0).toUpperCase()}
           </div>
-          <div className="mini-card">
-            <h4>Access Control</h4>
-            <p>Biometric, geofence, and security policy</p>
-          </div>
-          <div className="mini-card">
-            <h4>Security</h4>
-            <p>JWT, rate limiting, password policy</p>
-          </div>
-          <div className="mini-card">
-            <h4>Notifications</h4>
-            <p>Email, SMS, push notifications</p>
+          <div>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: '800' }}>{user?.name || 'Team Member'}</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{user?.email || 'user@company.com'}</p>
+            <span className="badge badge-approved" style={{ marginTop: '6px' }}>{getRoleLabel(user?.role)}</span>
           </div>
         </div>
       </div>
@@ -792,41 +877,33 @@ function SettingsPage() {
 
 export default function App() {
   const [data, setData] = useState(null);
-  const [loggedIn, setLoggedIn] = useState(Boolean(getStoredAuthUser()));
   const [user, setUser] = useState(getStoredAuthUser());
+  const [loggedIn, setLoggedIn] = useState(Boolean(getStoredAuthUser()));
+  const [theme, setTheme] = useState('dark');
+
+  const [isCheckInOpen, setIsCheckInOpen] = useState(false);
+  const [isAddEmpOpen, setIsAddEmpOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 4000);
+  };
+
+  const refreshData = async () => {
+    const res = await loadDashboardData();
+    setData(res);
+  };
 
   useEffect(() => {
-    async function fetchData() {
-      const response = await loadDashboardData();
-      setData(response);
-    }
-
-    fetchData();
+    refreshData();
   }, []);
 
   const handleAuth = (authUser) => {
     setUser(authUser);
     setLoggedIn(true);
-  };
-
-  const handleLeaveSubmit = async (payload) => {
-    const requestPayload = {
-      ...payload,
-      employee: payload.employee || user?.name || 'Employee',
-    };
-
-    const response = await submitLeaveRequest(requestPayload);
-    setData((prev) => ({ ...prev, leaveRequests: [response, ...(prev?.leaveRequests || [])] }));
-  };
-
-  const handleWfhSubmit = async (payload) => {
-    const requestPayload = {
-      ...payload,
-      employee: payload.employee || user?.name || 'Employee',
-    };
-
-    const response = await submitWfhRequest(requestPayload);
-    setData((prev) => ({ ...prev, wfhRequests: [response, ...(prev?.wfhRequests || [])] }));
+    showToast(`Welcome back, ${authUser.name}!`);
+    refreshData();
   };
 
   const handleLogout = () => {
@@ -835,57 +912,115 @@ export default function App() {
     setLoggedIn(false);
   };
 
-  const renderGuestRoutes = () => (
-    <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/login" element={<AuthPage onAuth={handleAuth} initialMode="login" />} />
-      <Route path="/signup" element={<AuthPage onAuth={handleAuth} initialMode="signup" />} />
-      <Route path="/dashboard" element={<Navigate to="/login" replace />} />
-      <Route path="/employees" element={<Navigate to="/login" replace />} />
-      <Route path="/attendance" element={<Navigate to="/login" replace />} />
-      <Route path="/leave" element={<Navigate to="/login" replace />} />
-      <Route path="/wfh" element={<Navigate to="/login" replace />} />
-      <Route path="/reports" element={<Navigate to="/login" replace />} />
-      <Route path="/notifications" element={<Navigate to="/login" replace />} />
-      <Route path="/settings" element={<Navigate to="/login" replace />} />
-      <Route path="/profile" element={<Navigate to="/login" replace />} />
-      <Route path="/services" element={<Navigate to="/login" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
-  const scopedData = getScopedDashboardData(data, user);
+  const handleCheckInSubmit = async (payload) => {
+    await submitCheckIn(payload);
+    await refreshData();
+    showToast(`Check-In recorded via ${payload.method}!`);
+  };
 
-  const renderProtectedRoutes = () => (
-    <Routes>
-      <Route path="/" element={<HomePage />} />
-      <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/signup" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/dashboard" element={<DashboardPage data={scopedData} user={user} />} />
-      <Route path="/employees" element={canAccessPermission(user?.role, 'employees') ? <EmployeesPage data={scopedData} userRole={user?.role} /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/attendance" element={canAccessPermission(user?.role, 'attendance') ? <AttendancePage data={scopedData} /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/leave" element={canAccessPermission(user?.role, 'leave') ? <LeavePage data={scopedData} onSubmit={handleLeaveSubmit} /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/wfh" element={canAccessPermission(user?.role, 'wfh') ? <WfhPage data={scopedData} onSubmit={handleWfhSubmit} /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/reports" element={canAccessPermission(user?.role, 'reports') ? <ReportsPage data={scopedData} /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/notifications" element={<NotificationsPage data={scopedData} />} />
-      <Route path="/settings" element={canAccessPermission(user?.role, 'settings') ? <SettingsPage /> : <Navigate to="/dashboard" replace />} />
-      <Route path="/profile" element={<ProfilePage user={user} />} />
-      <Route path="/services" element={canAccessPermission(user?.role, 'services') ? <ServicesPage /> : <Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
-  );
+  const handleCheckOutSubmit = async (employeeName) => {
+    await submitCheckOut(employeeName);
+    await refreshData();
+    showToast(`Check-Out recorded for ${employeeName}`);
+  };
 
-  if (!loggedIn) {
-    return (
-      <AppShell isGuest navItems={guestNavItems}>
-        {renderGuestRoutes()}
-      </AppShell>
-    );
-  }
+  const handleAddEmployee = async (form) => {
+    await submitAddEmployee(form);
+    await refreshData();
+    showToast(`Employee ${form.name} added successfully!`);
+  };
+
+  const handleStatusChange = async (id, newStatus) => {
+    await updateEmployeeStatus(id, newStatus);
+    await refreshData();
+    showToast(`Employee status updated to ${newStatus}`);
+  };
+
+  const handleDeleteEmployee = async (id) => {
+    await deleteEmployee(id);
+    await refreshData();
+    showToast('Employee deleted from directory.');
+  };
+
+  const handleLeaveSubmit = async (form) => {
+    await submitLeaveRequest(form);
+    await refreshData();
+    showToast('Leave request submitted!');
+  };
+
+  const handleLeaveStatus = async (id, newStatus) => {
+    await updateLeaveStatus(id, newStatus);
+    await refreshData();
+    showToast(`Leave request ${newStatus}`);
+  };
+
+  const handleWfhSubmit = async (form) => {
+    await submitWfhRequest(form);
+    await refreshData();
+    showToast('WFH request submitted!');
+  };
+
+  const handleWfhStatus = async (id, newStatus) => {
+    await updateWfhStatus(id, newStatus);
+    await refreshData();
+    showToast(`WFH request ${newStatus}`);
+  };
+
+  const handleSaveSettings = async (newSettings) => {
+    await updateSettings(newSettings);
+    await refreshData();
+    showToast('Office configuration saved!');
+  };
 
   return (
-    <AppShell user={user} navItems={getNavItems(user?.role)} onLogout={handleLogout}>
-      {renderProtectedRoutes()}
+    <AppShell
+      user={user}
+      navItems={loggedIn ? getNavItems(user?.role) : guestNavItems}
+      onLogout={handleLogout}
+      theme={theme}
+      onToggleTheme={handleToggleTheme}
+      isGuest={!loggedIn}
+    >
+      <ToastAlert message={toastMessage} onClose={() => setToastMessage('')} />
+
+      <CheckInModal
+        isOpen={isCheckInOpen}
+        onClose={() => setIsCheckInOpen(false)}
+        onCheckIn={handleCheckInSubmit}
+        employeeName={user?.name}
+      />
+
+      <AddEmployeeModal
+        isOpen={isAddEmpOpen}
+        onClose={() => setIsAddEmpOpen(false)}
+        onAddEmployee={handleAddEmployee}
+      />
+
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={loggedIn ? <Navigate to="/dashboard" replace /> : <AuthPage onAuth={handleAuth} initialMode="login" />} />
+        <Route path="/signup" element={loggedIn ? <Navigate to="/dashboard" replace /> : <AuthPage onAuth={handleAuth} initialMode="signup" />} />
+
+        {loggedIn ? (
+          <>
+            <Route path="/dashboard" element={<DashboardPage data={data} user={user} onOpenCheckIn={() => setIsCheckInOpen(true)} onOpenAddEmp={() => setIsAddEmpOpen(true)} />} />
+            <Route path="/employees" element={<EmployeesPage data={data} onOpenAddEmp={() => setIsAddEmpOpen(true)} onStatusChange={handleStatusChange} onDelete={handleDeleteEmployee} />} />
+            <Route path="/attendance" element={<AttendancePage data={data} onOpenCheckIn={() => setIsCheckInOpen(true)} onCheckOut={handleCheckOutSubmit} />} />
+            <Route path="/leave" element={<LeavePage data={data} onSubmitLeave={handleLeaveSubmit} onUpdateLeaveStatus={handleLeaveStatus} user={user} />} />
+            <Route path="/wfh" element={<WfhPage data={data} onSubmitWfh={handleWfhSubmit} onUpdateWfhStatus={handleWfhStatus} user={user} />} />
+            <Route path="/reports" element={<ReportsPage data={data} />} />
+            <Route path="/notifications" element={<NotificationsPage data={data} />} />
+            <Route path="/settings" element={<SettingsPage settings={data?.settings} onSaveSettings={handleSaveSettings} />} />
+            <Route path="/profile" element={<ProfilePage user={user} />} />
+          </>
+        ) : (
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        )}
+      </Routes>
     </AppShell>
   );
 }

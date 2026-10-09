@@ -1,7 +1,7 @@
-import { wfhRequests } from '../data/mockData.js';
+import { initialWfhRequests } from '../data/mockData.js';
 
 export const getWfhRequests = (req, res) => {
-  res.json(wfhRequests);
+  res.json(initialWfhRequests);
 };
 
 export const createWfhRequest = (req, res) => {
@@ -19,6 +19,6 @@ export const createWfhRequest = (req, res) => {
     status: 'Pending',
   };
 
-  wfhRequests.unshift(newRequest);
+  initialWfhRequests.unshift(newRequest);
   res.status(201).json(newRequest);
 };

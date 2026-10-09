@@ -1,13 +1,21 @@
-import { attendanceRecords, dashboardStats, employees, leaveRequests, notifications, reports, wfhRequests } from '../data/mockData.js';
+import {
+  dashboardStats,
+  initialAttendanceRecords,
+  initialEmployees,
+  initialLeaveRequests,
+  initialNotifications,
+  initialReports,
+  initialWfhRequests
+} from '../data/mockData.js';
 
 export const getDashboardData = (req, res) => {
   res.json({
     stats: dashboardStats,
-    employees,
-    attendance: attendanceRecords,
-    leaveRequests,
-    wfhRequests,
-    reports,
-    notifications,
+    employees: initialEmployees,
+    attendance: initialAttendanceRecords,
+    leaveRequests: initialLeaveRequests,
+    wfhRequests: initialWfhRequests,
+    reports: initialReports,
+    notifications: initialNotifications,
   });
 };
